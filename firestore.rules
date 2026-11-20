@@ -15,8 +15,7 @@ service cloud.firestore {
         && d.end > d.start
         && d.loc is string && d.loc.size() > 0 && d.loc.size() <= 40
         && d.place is string && d.place.size() <= 80
-        && d.task is string && d.task.size() >= 10 && d.task.size() <= 600
-        && d.output is string && d.output.size() >= 2 && d.output.size() <= 200;
+        && d.task is string && d.task.size() >= 2 && d.task.size() <= 600;
     }
 
     match /admins/{id} {

@@ -1,4 +1,4 @@
-import * as F from "./fb.js?v=3";
+import * as F from "./fb.js?v=4";
 const { auth, db } = F;
 
 const DEF_LOCS = ["Lab", "Greenhouse", "Field", "Computer or office", "Other"];
@@ -24,7 +24,7 @@ let me = null, isAdmin = false, profile = null, view = "dash", month = todayS.sl
 let locations = DEF_LOCS.slice(), entries = [], users = {}, unsubs = [];
 let busy = false, editingId = null, selLoc = "", armed = null, armTimer = null;
 let fStudent = "all", fStatus = "all", returningId = null, returnNote = "", addOpen = false, addErr = "";
-let addForm = { uid: "", date: "", start: "", end: "", loc: "", place: "", task: "", output: "", approve: true };
+let addForm = { uid: "", date: "", start: "", end: "", loc: "", place: "", task: "", approve: true };
 let authMode = "in";
 
 /* ---------- helpers ---------- */
@@ -53,7 +53,7 @@ function norm(id, d) {
   const mins = toMin(d.end) - toMin(d.start); if (!(mins > 0 && mins <= 720)) return null;
   const ms = (t) => (t && t.toMillis ? t.toMillis() : 0);
   return { id, uid: String(d.uid || ""), date: d.date, start: d.start, end: d.end, hours: r2(mins / 60), loc: String(d.loc || "").slice(0, 40), place: String(d.place || "").slice(0, 80),
-    task: String(d.task || "").slice(0, 600), output: String(d.output || "").slice(0, 200), status: ["approved", "returned"].includes(d.status) ? d.status : "pending",
+    task: String(d.task || "").slice(0, 600), status: ["approved", "returned"].includes(d.status) ? d.status : "pending",
     note: String(d.note || "").slice(0, 300), approvedHours: Number(d.approvedHours) || 0, createdAt: ms(d.createdAt), by: d.addedBy === "owner" ? "owner" : "" };
 }
 const nameOf = (uid) => (users[uid] && users[uid].name) || "";
@@ -161,8 +161,7 @@ function renderStudent() {
     <div class="row3"><label>Start<input id="f-start" type="time"></label><label>End<input id="f-end" type="time"></label><div class="lab"><small>Hours</small><div class="hours-out" id="f-hours">0 h</div></div></div>
     <div class="lab" role="radiogroup"><span>Where did you work?</span><div class="chips" id="f-loc"></div></div>
     <label>Which room, field or plot?<small>Example: Greenhouse 2 bench A, Field 3 rows 1 to 40, Lab room 214.</small><input id="f-place" maxlength="80" autocomplete="off"></label>
-    <label>What work did you do?<small>Say what you actually did, in a sentence or two.</small><textarea id="f-task" maxlength="600" placeholder="Measured plant height and stalk diameter on rows 1 to 40 of the nitrogen trial."></textarea></label>
-    <label>Output<small>Something we can check: a count, a file name, a plot range.</small><input id="f-output" maxlength="200" autocomplete="off" placeholder="40 rows, 320 plants, file heights_nov19.xlsx"></label>
+    <label>What work did you do?<textarea id="f-task" maxlength="600"></textarea></label>
     <div class="err" id="f-err" role="alert"></div>
     <div class="btnrow"><button class="btn primary" id="f-submit" type="submit">${editingId ? "Save changes" : "Save entry"}</button><button class="btn" id="f-cancel" type="button" ${editingId ? "" : "hidden"}>Cancel</button></div></form>
     <div class="card" id="mine"></div></div>`;
@@ -172,7 +171,7 @@ function renderStudent() {
   $("f-cancel").onclick = () => { editingId = null; selLoc = ""; renderStudent(); };
   $("f").onsubmit = submitStudent;
   $("f-loc").onclick = (ev) => { const b = ev.target.closest("[data-loc]"); if (!b) return; selLoc = b.dataset.loc; fillLocs(); };
-  if (editingId) { const r = rows().find((x) => x.id === editingId); if (r) { $("f-date").value = r.date; $("f-start").value = r.start; $("f-end").value = r.end; selLoc = r.loc; fillLocs(); $("f-place").value = r.place; $("f-task").value = r.task; $("f-output").value = r.output; calc(); } }
+  if (editingId) { const r = rows().find((x) => x.id === editingId); if (r) { $("f-date").value = r.date; $("f-start").value = r.start; $("f-end").value = r.end; selLoc = r.loc; fillLocs(); $("f-place").value = r.place; $("f-task").value = r.task; calc(); } }
 }
 function fillLocs() {
   const box = $("f-loc"); if (!box) return; if (!locations.includes(selLoc) && selLoc) locations = locations.concat([selLoc]);
@@ -186,7 +185,7 @@ function overlapMsg(uid, date, start, end, skipId) {
 }
 async function submitStudent(ev) {
   ev.preventDefault(); if (busy) return; refreshToday();
-  const v = { date: $("f-date").value, start: $("f-start").value, end: $("f-end").value, loc: selLoc, place: $("f-place").value.trim(), task: $("f-task").value.trim(), output: $("f-output").value.trim() };
+  const v = { date: $("f-date").value, start: $("f-start").value, end: $("f-end").value, loc: selLoc, place: $("f-place").value.trim(), task: $("f-task").value.trim() };
   const err = $("f-err"); let m = v.start && v.end ? toMin(v.end) - toMin(v.start) : 0;
   const cur = editingId ? rows().find((x) => x.id === editingId) : null;
   err.textContent = "";
@@ -199,12 +198,11 @@ async function submitStudent(ev) {
   else if (m > 720) err.textContent = "One entry can't be longer than 12 hours. Split it into two.";
   else if (!v.loc) err.textContent = "Choose where you worked.";
   else if (needsPlace(v.loc) && v.place.length < 2) err.textContent = "Say which field or place you worked in.";
-  else if (v.task.length < 10) err.textContent = "Describe the work in at least a few words.";
-  else if (v.output.length < 2) err.textContent = "Add the output: a count, a file name or a plot range.";
+  else if (v.task.length < 2) err.textContent = "Say what work you did.";
   else err.textContent = overlapMsg(me.uid, v.date, v.start, v.end, editingId);
   if (err.textContent) return;
   busy = true; $("f-submit").disabled = true;
-  const body = { uid: me.uid, date: v.date, start: v.start, end: v.end, hours: r2(m / 60), loc: v.loc, place: v.place, task: v.task, output: v.output, status: "pending" };
+  const body = { uid: me.uid, date: v.date, start: v.start, end: v.end, hours: r2(m / 60), loc: v.loc, place: v.place, task: v.task, status: "pending" };
   try {
     if (editingId) { body.updatedAt = F.serverTimestamp(); await F.updateDoc(F.doc(db, "entries", editingId), body); toast("Changes saved. It goes back to the supervisor for approval."); }
     else { body.createdAt = F.serverTimestamp(); await F.addDoc(F.collection(db, "entries"), body); toast("Saved. It counts once it is approved."); }
@@ -223,7 +221,7 @@ function renderMineOnly() {
     list.forEach((r) => { if (r.date !== cur) { if (cur) h += "</div>"; cur = r.date; h += `<div class="day"><div class="dayhead"><span>${esc(longDate(r.date))}</span><span class="mono">${fh(tot[r.date])} h</span></div>`; }
       h += `<div class="entry"><div class="meta"><span class="mono muted">${esc(fmtT(r.start))} to ${esc(fmtT(r.end))}</span><span class="mono"><b>${fh(r.hours)} h</b></span>${pill(r)}${byPill(r)}${isLate(r) ? '<span class="pill bad">Late</span>' : ""}</div>
       <div class="acts">${r.status !== "approved" ? `<button class="btn sm" data-edit="${esc(r.id)}">Edit</button><button class="btn sm danger" data-del="${esc(r.id)}">Delete</button>` : ""}</div>
-      ${r.note && r.status === "returned" ? `<div class="note">Returned: ${esc(r.note)}</div>` : ""}<div class="out"><b>Where:</b> ${esc(whereOf(r))}</div><div class="what">${esc(r.task)}</div><div class="out">Output: ${esc(r.output)}</div></div>`; });
+      ${r.note && r.status === "returned" ? `<div class="note">Returned: ${esc(r.note)}</div>` : ""}<div class="out"><b>Where:</b> ${esc(whereOf(r))}</div><div class="what">${esc(r.task)}</div></div>`; });
     h += "</div>"; }
   box.innerHTML = h;
   box.onclick = async (ev) => {
@@ -280,9 +278,9 @@ function aggregate(rs) {
 }
 function csvCell(v) { let s = String(v == null ? "" : v); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
 function buildCsv(rs, label, A, studs) {
-  const L = [["Student", "Date", "Start", "End", "Hours logged", "Hours approved", "Status", "Where", "Work done", "Output", "Email"].join(",")];
+  const L = [["Student", "Date", "Start", "End", "Hours logged", "Hours approved", "Status", "Where", "Work done", "Email"].join(",")];
   rs.slice().sort((a, b) => nameOf(a.uid).localeCompare(nameOf(b.uid)) || (a.date + a.start).localeCompare(b.date + b.start)).forEach((r) =>
-    L.push([csvCell(nameOf(r.uid)), r.date, r.start, r.end, r.hours, apprH(r), r.status, csvCell(whereOf(r)), csvCell(r.task), csvCell(r.output), csvCell((users[r.uid] || {}).email)].join(",")));
+    L.push([csvCell(nameOf(r.uid)), r.date, r.start, r.end, r.hours, apprH(r), r.status, csvCell(whereOf(r)), csvCell(r.task), csvCell((users[r.uid] || {}).email)].join(",")));
   L.push(""); L.push("Student," + label); studs.forEach((u) => L.push(csvCell(nameOf(u)) + "," + r2((A[u] || { appr: 0 }).appr)));
   return L.join("\r\n");
 }
@@ -313,17 +311,17 @@ function renderDash() {
   const todo = fr.filter((r) => r.status === "pending").length;
   h += `<div class="card"><div class="tbar"><h3 style="margin:0">Entries</h3><div class="ctrl"><button class="btn" data-act="add-open">${addOpen ? "Close add form" : "Add entry for a student"}</button>${todo ? `<button class="btn" data-act="approve-all">Approve all waiting (${todo})</button>` : ""}<button class="btn" data-act="csv">Download CSV</button></div></div>`;
   if (addOpen) h += addPanel(studs);
-  h += fr.length ? `<div class="scroll"><table><thead><tr><th>Date</th><th>Student</th><th>Time</th><th class="n">Hours</th><th>Where</th><th>Work done</th><th>Output</th><th>Status</th><th></th></tr></thead><tbody>${fr.map((r) => {
+  h += fr.length ? `<div class="scroll"><table><thead><tr><th>Date</th><th>Student</th><th>Time</th><th class="n">Hours</th><th>Where</th><th>Work done</th><th>Status</th><th></th></tr></thead><tbody>${fr.map((r) => {
     const act = r.status === "approved" ? `<button class="btn sm" data-act="unapprove" data-id="${esc(r.id)}">Undo</button>` : `<div class="ctrl"><button class="btn sm" data-act="approve" data-id="${esc(r.id)}">Approve</button>${r.status === "returned" ? "" : `<button class="btn sm" data-act="return" data-id="${esc(r.id)}">Return</button>`}</div>`;
-    let row = `<tr><td class="mono" style="white-space:nowrap">${esc(shortDate(r.date))}${isLate(r) ? ' <span class="pill bad">Late</span>' : ""}${dayTot[r.uid + "|" + r.date] > 10 ? ` <span class="pill warn">${fh(dayTot[r.uid + "|" + r.date])} h that day</span>` : ""}</td><td style="white-space:nowrap"><i class="dot" style="--c:${CV(r.uid)}"></i> ${esc(nameOf(r.uid))}</td><td class="mono muted" style="white-space:nowrap">${esc(fmtT(r.start))} to ${esc(fmtT(r.end))}</td><td class="n mono">${fh(r.hours)}</td><td class="what">${esc(whereOf(r))}</td><td class="what">${esc(r.task)}</td><td class="what muted">${esc(r.output)}</td><td>${pill(r)}${byPill(r)}${r.note && r.status === "returned" ? `<div class="muted" style="font-size:12px;max-width:180px;overflow-wrap:anywhere">${esc(r.note)}</div>` : ""}</td><td>${act}</td></tr>`;
-    if (returningId === r.id) row += `<tr class="sub"><td colspan="9"><div class="retin"><input id="ret-note" maxlength="300" value="${esc(returnNote)}" placeholder="What should the student fix?"><button class="btn sm" data-act="return-send" data-id="${esc(r.id)}">Send back</button><button class="btn sm" data-act="return-cancel">Cancel</button></div></td></tr>`;
+    let row = `<tr><td class="mono" style="white-space:nowrap">${esc(shortDate(r.date))}${isLate(r) ? ' <span class="pill bad">Late</span>' : ""}${dayTot[r.uid + "|" + r.date] > 10 ? ` <span class="pill warn">${fh(dayTot[r.uid + "|" + r.date])} h that day</span>` : ""}</td><td style="white-space:nowrap"><i class="dot" style="--c:${CV(r.uid)}"></i> ${esc(nameOf(r.uid))}</td><td class="mono muted" style="white-space:nowrap">${esc(fmtT(r.start))} to ${esc(fmtT(r.end))}</td><td class="n mono">${fh(r.hours)}</td><td class="what">${esc(whereOf(r))}</td><td class="what">${esc(r.task)}</td><td>${pill(r)}${byPill(r)}${r.note && r.status === "returned" ? `<div class="muted" style="font-size:12px;max-width:180px;overflow-wrap:anywhere">${esc(r.note)}</div>` : ""}</td><td>${act}</td></tr>`;
+    if (returningId === r.id) row += `<tr class="sub"><td colspan="8"><div class="retin"><input id="ret-note" maxlength="300" value="${esc(returnNote)}" placeholder="What should the student fix?"><button class="btn sm" data-act="return-send" data-id="${esc(r.id)}">Send back</button><button class="btn sm" data-act="return-cancel">Cancel</button></div></td></tr>`;
     return row; }).join("")}</tbody></table></div>` : '<p class="empty">No entries match. Change the month or the filters above.</p>';
   h += `<p class="tfoot-note">Only approved hours count. Approved entries are locked: students cannot edit or delete them. Hours are always calculated from start and end times.</p></div>`;
   $("main").innerHTML = h;
   $("m-prev").onclick = () => { month = shiftMonth(month, -1); render(); }; $("m-next").onclick = () => { month = shiftMonth(month, 1); render(); };
   $("y-prev").onclick = () => { month = shiftMonth(month, -12); render(); }; $("y-next").onclick = () => { month = shiftMonth(month, 12); render(); };
   $("d-student").onchange = (e) => { fStudent = e.target.value; render(); }; $("d-status").onchange = (e) => { fStatus = e.target.value; render(); };
-  $("main").oninput = (e) => { const id = e.target.id; if (id === "ret-note") returnNote = e.target.value; const m = { "a-uid": "uid", "a-date": "date", "a-start": "start", "a-end": "end", "a-loc": "loc", "a-place": "place", "a-task": "task", "a-output": "output" }; if (m[id]) addForm[m[id]] = e.target.value; else if (id === "a-approve") addForm.approve = e.target.checked; };
+  $("main").oninput = (e) => { const id = e.target.id; if (id === "ret-note") returnNote = e.target.value; const m = { "a-uid": "uid", "a-date": "date", "a-start": "start", "a-end": "end", "a-loc": "loc", "a-place": "place", "a-task": "task" }; if (m[id]) addForm[m[id]] = e.target.value; else if (id === "a-approve") addForm.approve = e.target.checked; };
   $("main").onchange = (e) => { if (e.target.id === "a-approve") addForm.approve = e.target.checked; };
   $("main").onclick = (ev) => dashClick(ev, fr);
 }
@@ -334,7 +332,7 @@ function addPanel(studs) {
    <div class="row2"><label>Student<select id="a-uid">${studs.map((u) => `<option value="${esc(u)}"${u === f.uid ? " selected" : ""}>${esc(nameOf(u))}</option>`).join("")}</select></label><label>Date<input id="a-date" type="date" max="${todayS}" value="${esc(f.date)}"></label></div>
    <div class="row2"><label>Start<input id="a-start" type="time" value="${esc(f.start)}"></label><label>End<input id="a-end" type="time" value="${esc(f.end)}"></label></div>
    <div class="row2"><label>Where<select id="a-loc"><option value="">Choose…</option>${locations.map((l) => `<option${l === f.loc ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label><label>Room, field or plot<input id="a-place" maxlength="80" value="${esc(f.place)}"></label></div>
-   <label>Work done<textarea id="a-task" maxlength="600">${esc(f.task)}</textarea></label><label>Output<input id="a-output" maxlength="200" value="${esc(f.output)}"></label>
+   <label>Work done<textarea id="a-task" maxlength="600">${esc(f.task)}</textarea></label>
    <label style="flex-direction:row;align-items:center;gap:8px"><input id="a-approve" type="checkbox"${f.approve ? " checked" : ""}> Approve it now</label>
    <div class="err" role="alert">${esc(addErr)}</div><div class="btnrow"><button class="btn primary" type="button" data-act="add-save">Save entry</button></div></form>`;
 }
@@ -361,15 +359,14 @@ async function dashClick(ev, fr) {
   } catch (e) { toast(errMsg(e)); render(); }
 }
 async function saveAdded(btn) {
-  const f = addForm, m = f.start && f.end ? toMin(f.end) - toMin(f.start) : 0, place = f.place.trim(), task = f.task.trim(), out = f.output.trim(); addErr = "";
+  const f = addForm, m = f.start && f.end ? toMin(f.end) - toMin(f.start) : 0, place = f.place.trim(), task = f.task.trim(); addErr = "";
   if (!f.uid) addErr = "Choose a student."; else if (!/^\d{4}-\d{2}-\d{2}$/.test(f.date)) addErr = "Pick the date."; else if (f.date > todayS) addErr = "The date can't be in the future.";
   else if (!f.start || !f.end) addErr = "Enter start and end time."; else if (m <= 0) addErr = "End time must be after start time."; else if (m > 720) addErr = "One entry can't be longer than 12 hours.";
-  else if (!f.loc) addErr = "Choose where it was done."; else if (needsPlace(f.loc) && place.length < 2) addErr = "Say which field or place."; else if (task.length < 10) addErr = "Describe the work in at least a few words.";
-  else if (out.length < 2) addErr = "Add the output."; else addErr = overlapMsg(f.uid, f.date, f.start, f.end, null);
+  else if (!f.loc) addErr = "Choose where it was done."; else if (needsPlace(f.loc) && place.length < 2) addErr = "Say which field or place."; else if (task.length < 2) addErr = "Say what work was done."; else addErr = overlapMsg(f.uid, f.date, f.start, f.end, null);
   if (addErr) { if (document.activeElement) document.activeElement.blur(); render(); return; }
   btn.disabled = true;
-  const body = { uid: f.uid, date: f.date, start: f.start, end: f.end, hours: r2(m / 60), loc: f.loc, place, task, output: out, status: f.approve ? "approved" : "pending", createdAt: F.serverTimestamp(), addedBy: "owner" };
+  const body = { uid: f.uid, date: f.date, start: f.start, end: f.end, hours: r2(m / 60), loc: f.loc, place, task, status: f.approve ? "approved" : "pending", createdAt: F.serverTimestamp(), addedBy: "owner" };
   if (f.approve) { body.approvedHours = r2(m / 60); body.approvedAt = F.serverTimestamp(); }
-  try { await F.addDoc(F.collection(db, "entries"), body); toast(f.approve ? "Entry added and approved" : "Entry added, waiting for approval"); const u = f.uid; addForm = { uid: u, date: "", start: "", end: "", loc: "", place: "", task: "", output: "", approve: true }; addOpen = false; if (document.activeElement) document.activeElement.blur(); render(); }
+  try { await F.addDoc(F.collection(db, "entries"), body); toast(f.approve ? "Entry added and approved" : "Entry added, waiting for approval"); const u = f.uid; addForm = { uid: u, date: "", start: "", end: "", loc: "", place: "", task: "", approve: true }; addOpen = false; if (document.activeElement) document.activeElement.blur(); render(); }
   catch (e) { addErr = errMsg(e); btn.disabled = false; render(); }
 }
