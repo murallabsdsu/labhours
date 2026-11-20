@@ -1,4 +1,4 @@
-import * as F from "./fb.js?v=4";
+import * as F from "./fb.js?v=5";
 const { auth, db } = F;
 
 const DEF_LOCS = ["Lab", "Greenhouse", "Field", "Computer or office", "Other"];
@@ -25,7 +25,7 @@ let locations = DEF_LOCS.slice(), entries = [], users = {}, unsubs = [];
 let busy = false, editingId = null, selLoc = "", armed = null, armTimer = null;
 let fStudent = "all", fStatus = "all", returningId = null, returnNote = "", addOpen = false, addErr = "";
 let addForm = { uid: "", date: "", start: "", end: "", loc: "", place: "", task: "", approve: true };
-let authMode = "in";
+let authMode = "in", autoMade = false;
 
 /* ---------- helpers ---------- */
 let toastT = null;
@@ -93,7 +93,8 @@ function renderAuth() {
     try {
       if (up) {
         const cred = await F.createUserWithEmailAndPassword(auth, em, pw);
-        await F.setDoc(F.doc(db, "users", cred.user.uid), { email: em, requestedName: nm, approved: false, createdAt: F.serverTimestamp() });
+        try { await F.updateProfile(cred.user, { displayName: nm }); } catch (e2) {}
+        try { await F.sendEmailVerification(cred.user); } catch (e2) {}
       } else await F.signInWithEmailAndPassword(auth, em, pw);
     } catch (e) { err.textContent = errMsg(e); }
     busy = false;
@@ -104,6 +105,19 @@ function renderAuth() {
 F.onAuthStateChanged(auth, async (u) => {
   clearSubs(); me = u; isAdmin = false; profile = null; entries = []; users = {}; banner("");
   if (!u) { renderAuth(); return; }
+  if (!u.emailVerified) { renderVerify(u); return; }
+  startSession(u);
+});
+function renderVerify(u) {
+  $("tabs").hidden = true; $("who").hidden = false;
+  $("who").innerHTML = `<span>${esc(u.email)}</span><button class="btn sm" id="so">Sign out</button>`; $("so").onclick = () => F.signOut(auth);
+  $("main").innerHTML = `<div class="card narrow"><h2>Verify your email</h2><p class="muted">We sent a link to <b>${esc(u.email)}</b>. Open it, then come back here and click the button below. Check spam if you don't see it. Wrong email? Sign out and create the account again.</p>
+   <div class="err" id="vf-e" role="alert"></div><button class="btn primary" id="vf-go">I verified my email</button><button class="btn" id="vf-re">Send the email again</button></div>`;
+  $("vf-go").onclick = async () => { try { await u.reload(); if (auth.currentUser && auth.currentUser.emailVerified) { await auth.currentUser.getIdToken(true); me = auth.currentUser; startSession(me); } else $("vf-e").textContent = "Not verified yet. Open the link in the email first."; } catch (e) { $("vf-e").textContent = errMsg(e); } };
+  $("vf-re").onclick = async () => { try { await F.sendEmailVerification(u); toast("Verification email sent"); } catch (e) { $("vf-e").textContent = errMsg(e); } };
+}
+async function startSession(u) {
+  clearSubs(); isAdmin = false; profile = null; entries = []; users = {};
   $("main").innerHTML = '<p class="empty">Loading…</p>';
   try { const a = await F.getDoc(F.doc(db, "admins", u.uid)); isAdmin = a.exists(); } catch (e) { isAdmin = false; }
   unsubs.push(F.onSnapshot(F.doc(db, "settings", "main"), (s) => {
@@ -120,12 +134,12 @@ F.onAuthStateChanged(auth, async (u) => {
     unsubs.push(F.onSnapshot(F.collection(db, "entries"), (s) => { entries = s.docs.map((d) => ({ id: d.id, data: d.data() })); render(); }, onErr));
   } else {
     unsubs.push(F.onSnapshot(F.doc(db, "users", u.uid), (s) => {
-      if (!s.exists()) { profile = { missing: true }; } else { const x = s.data(); profile = { approved: x.approved === true, name: x.name || "", requested: x.requestedName || "" }; if (profile.approved) users[u.uid] = { name: profile.name, approved: true }; }
+      if (!s.exists()) { profile = { missing: true }; const dn = (u.displayName || "").trim(); if (NAME_RE.test(dn) && !autoMade) { autoMade = true; F.setDoc(F.doc(db, "users", u.uid), { email: u.email || "", requestedName: dn, approved: false, createdAt: F.serverTimestamp() }).catch(() => { autoMade = false; }); } } else { const x = s.data(); profile = { approved: x.approved === true, name: x.name || "", requested: x.requestedName || "" }; if (profile.approved) users[u.uid] = { name: profile.name, approved: true }; }
       render();
     }, onErr));
     unsubs.push(F.onSnapshot(F.query(F.collection(db, "entries"), F.where("uid", "==", u.uid)), (s) => { entries = s.docs.map((d) => ({ id: d.id, data: d.data() })); render(); }, onErr));
   }
-});
+}
 function onErr(e) { banner(e && e.code === "permission-denied" ? "You don't have access to this data." : "Could not load the log. Reload the page."); }
 
 function render() {
