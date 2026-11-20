@@ -1,10 +1,10 @@
-:root{--bg:#EDF1EF;--surface:#fff;--ink:#15211D;--muted:#5B6B65;--line:#D5DEDA;--line-2:#E7EDEA;--accent:#1F6F5B;--accent-ink:#fff;--accent-soft:#E0EFE9;
---ok:#2A7A4A;--ok-bg:#E1F1E7;--warn:#98590B;--warn-bg:#FAEFD9;--bad:#A93A2A;--bad-bg:#F7E3DF;--shadow:0 1px 2px rgba(20,40,34,.06),0 4px 14px rgba(20,40,34,.05);
---s1:#2A7F62;--s2:#C9832A;--s3:#3F66B0;--s4:#A04576;--s5:#6B5BB5;--s6:#B5483A;--s7:#2E8B9A;--s8:#7A8B2E;
+:root{--bg:#e0d9d3;--surface:#f5f2ef;--ink:#171614;--muted:#524639;--line:#c8bfb5;--line-2:#ddd5cd;--accent:#524639;--accent-ink:#f5f2ef;--accent-soft:#e9e2db;
+--ok:#4a6a3a;--ok-bg:#dfe6d6;--warn:#8a5a14;--warn-bg:#f1e3c8;--bad:#9a3a2a;--bad-bg:#f0d9d3;--shadow:0 1px 2px rgba(23,22,20,.07),0 4px 14px rgba(23,22,20,.06);
+--s1:#524639;--s2:#b07a3a;--s3:#5e7a5a;--s4:#8c4a3c;--s5:#4f6d8a;--s6:#8a6a8f;--s7:#3f7f7a;--s8:#918574;
 --f-display:"Space Grotesk","IBM Plex Sans",system-ui,sans-serif;--f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;--f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;color-scheme:light}
-@media (prefers-color-scheme:dark){:root{--bg:#0F1614;--surface:#17201D;--ink:#E6EEEA;--muted:#98A8A1;--line:#2B3833;--line-2:#212C28;--accent:#5CC49C;--accent-ink:#07201A;--accent-soft:#1B3029;
---ok:#6FD39A;--ok-bg:#183326;--warn:#E4B05E;--warn-bg:#35290F;--bad:#F08A78;--bad-bg:#3A1E19;--shadow:0 1px 2px rgba(0,0,0,.3);
---s1:#5CC49C;--s2:#E4AE5C;--s3:#7FA3E6;--s4:#D47FAE;--s5:#A79BE6;--s6:#EE8F7F;--s7:#6FCBD8;--s8:#B9CB62;color-scheme:dark}}
+@media (prefers-color-scheme:dark){:root{--bg:#171614;--surface:#221f1c;--ink:#e0d9d3;--muted:#9f958a;--line:#3a352f;--line-2:#2c2823;--accent:#b8aa95;--accent-ink:#171614;--accent-soft:#2e2a25;
+--ok:#9bc183;--ok-bg:#25301f;--warn:#e0b060;--warn-bg:#352a14;--bad:#ee9482;--bad-bg:#3a211b;--shadow:0 1px 2px rgba(0,0,0,.4);
+--s1:#c9bba8;--s2:#e0a65a;--s3:#8fb58a;--s4:#d98a78;--s5:#8fb0cf;--s6:#c79bcc;--s7:#6fc0ba;--s8:#9f958a;color-scheme:dark}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.5;padding:0 16px 56px}
 .app{max-width:1120px;margin:0 auto}
