@@ -1,4 +1,4 @@
-import * as F from "./fb.js?v=7";
+import * as F from "./fb.js?v=8";
 const { auth, db } = F;
 
 const DEF_LOCS = ["Lab", "Greenhouse", "Field", "Computer or office", "Other"];
@@ -74,7 +74,6 @@ const nameOf = (uid) => (users[uid] && users[uid].name) || "";
 const rows = () => entries.map((e) => norm(e.id, e.data)).filter(Boolean);
 const apprH = (r) => (r.status === "approved" ? r.hours : 0);
 const pendH = (r) => (r.status === "approved" ? 0 : r.hours);
-const isLate = (r) => r.by !== "owner" && r.createdAt && dayDiff(fmtDate(new Date(r.createdAt)), r.date) > 1;
 const whereOf = (r) => ((r.loc || "") + (r.loc && r.place ? ": " : "") + (r.place || "")) || "Not given";
 const pill = (r) => r.status === "approved" ? '<span class="pill ok">Approved</span>' : r.status === "returned" ? '<span class="pill bad">Returned</span>' : '<span class="pill warn">Waiting for approval</span>';
 const byPill = (r) => (r.by === "owner" ? ' <span class="pill soft">Added by supervisor</span>' : "");
@@ -252,7 +251,7 @@ function renderMineOnly() {
   if (!list.length) h += '<p class="empty">No entries yet. Add your first one on the left.</p>';
   else { let cur = ""; const tot = {}; list.forEach((r) => (tot[r.date] = (tot[r.date] || 0) + r.hours));
     list.forEach((r) => { if (r.date !== cur) { if (cur) h += "</div>"; cur = r.date; h += `<div class="day"><div class="dayhead"><span>${esc(longDate(r.date))}</span><span class="mono">${fh(tot[r.date])} h</span></div>`; }
-      h += `<div class="entry"><div class="meta"><span class="mono muted">${esc(fmtT(r.start))} to ${esc(fmtT(r.end))}</span><span class="mono"><b>${fh(r.hours)} h</b></span>${pill(r)}${byPill(r)}${isLate(r) ? '<span class="pill bad">Late</span>' : ""}</div>
+      h += `<div class="entry"><div class="meta"><span class="mono muted">${esc(fmtT(r.start))} to ${esc(fmtT(r.end))}</span><span class="mono"><b>${fh(r.hours)} h</b></span>${pill(r)}${byPill(r)}</div>
       <div class="acts">${r.status !== "approved" ? `<button class="btn sm" data-edit="${esc(r.id)}">Edit</button><button class="btn sm danger" data-del="${esc(r.id)}">Delete</button>` : ""}</div>
       ${r.note && r.status === "returned" ? `<div class="note">Returned: ${esc(r.note)}</div>` : ""}<div class="out"><b>Where:</b> ${esc(whereOf(r))}</div><div class="what">${esc(r.task)}</div>${extraLine(r) ? `<div class="out">${extraLine(r)}</div>` : ""}</div>`; });
     h += "</div>"; }
@@ -391,7 +390,7 @@ function renderDash() {
   h += fr.length ? `<div class="scroll"><table><thead><tr><th>Date</th><th>Student</th><th>Time</th><th class="n">Hours</th><th>Where</th><th>Work done</th><th>Status</th><th></th></tr></thead><tbody>${fr.map((r) => {
     const del = `<button class="btn sm danger" data-act="delete" data-id="${esc(r.id)}">Delete</button>`;
     const act = r.status === "approved" ? `<div class="ctrl"><button class="btn sm" data-act="unapprove" data-id="${esc(r.id)}">Undo</button>${del}</div>` : `<div class="ctrl"><button class="btn sm" data-act="approve" data-id="${esc(r.id)}">Approve</button>${r.status === "returned" ? "" : `<button class="btn sm" data-act="return" data-id="${esc(r.id)}">Return</button>`}${del}</div>`;
-    let row = `<tr><td class="mono" style="white-space:nowrap">${esc(shortDate(r.date))}${isLate(r) ? ' <span class="pill bad">Late</span>' : ""}${dayTot[r.uid + "|" + r.date] > 10 ? ` <span class="pill warn">${fh(dayTot[r.uid + "|" + r.date])} h that day</span>` : ""}</td><td style="white-space:nowrap"><i class="dot" style="--c:${CV(r.uid)}"></i> ${esc(nameOf(r.uid))}</td><td class="mono muted" style="white-space:nowrap">${esc(fmtT(r.start))} to ${esc(fmtT(r.end))}</td><td class="n mono">${fh(r.hours)}</td><td class="what">${esc(whereOf(r))}</td><td class="what">${esc(r.task)}${extraLine(r) ? `<div class="muted" style="font-size:12.5px">${extraLine(r)}</div>` : ""}</td><td>${pill(r)}${byPill(r)}${r.note && r.status === "returned" ? `<div class="muted" style="font-size:12px;max-width:180px;overflow-wrap:anywhere">${esc(r.note)}</div>` : ""}</td><td>${act}</td></tr>`;
+    let row = `<tr><td class="mono" style="white-space:nowrap">${esc(shortDate(r.date))}${dayTot[r.uid + "|" + r.date] > 10 ? ` <span class="pill warn">${fh(dayTot[r.uid + "|" + r.date])} h that day</span>` : ""}</td><td style="white-space:nowrap"><i class="dot" style="--c:${CV(r.uid)}"></i> ${esc(nameOf(r.uid))}</td><td class="mono muted" style="white-space:nowrap">${esc(fmtT(r.start))} to ${esc(fmtT(r.end))}</td><td class="n mono">${fh(r.hours)}</td><td class="what">${esc(whereOf(r))}</td><td class="what">${esc(r.task)}${extraLine(r) ? `<div class="muted" style="font-size:12.5px">${extraLine(r)}</div>` : ""}</td><td>${pill(r)}${byPill(r)}${r.note && r.status === "returned" ? `<div class="muted" style="font-size:12px;max-width:180px;overflow-wrap:anywhere">${esc(r.note)}</div>` : ""}</td><td>${act}</td></tr>`;
     if (returningId === r.id) row += `<tr class="sub"><td colspan="8"><div class="retin"><input id="ret-note" maxlength="300" value="${esc(returnNote)}" placeholder="What should the student fix?"><button class="btn sm" data-act="return-send" data-id="${esc(r.id)}">Send back</button><button class="btn sm" data-act="return-cancel">Cancel</button></div></td></tr>`;
     return row; }).join("")}</tbody></table></div>` : '<p class="empty">No entries match. Change the month or the filters above.</p>';
   h += `<p class="tfoot-note">Only approved hours count. Approved entries are locked: students cannot edit or delete them. Hours are always calculated from start and end times.</p></div>`;
