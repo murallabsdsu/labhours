@@ -16,7 +16,7 @@ export function cycleRange(now = new Date()) {
   const end = new Date(Date.UTC(y, endMonth, CYCLE_END_DAY)), start = new Date(Date.UTC(y, endMonth - 1, CYCLE_END_DAY + 1));
   return { start: ymd(start), end: ymd(end), endLabel: end.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }) };
 }
-const wrap = (title, body, site, btn) => `<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;color:#171614"><h2 style="margin:0 0 12px">${esc(title)}</h2>${body}<p style="margin:20px 0"><a href="${esc(site)}" style="background:#524639;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">${esc(btn)}</a></p><p style="color:#777;font-size:12px">Sent automatically by the Lab Hours Log.</p></div>`;
+const wrap = (title, body, site, btn) => `<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;color:#171614"><h2 style="margin:0 0 12px">${esc(title)}</h2>${body}<p style="margin:20px 0"><a href="${esc(site)}" style="background:#524639;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">${esc(btn)}</a></p><p style="color:#777;font-size:12px">Sent automatically by the MuralLab Lab Hours Log (MuralLab, South Dakota State University).</p></div>`;
 /** rows: [{name, n, hours}] of students with entries waiting for approval */
 export function adminEmail(rows, cyc, site) {
   const total = r2(rows.reduce((a, r) => a + r.hours, 0));
