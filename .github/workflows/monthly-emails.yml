@@ -28,6 +28,5 @@ jobs:
           MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || (github.event.schedule == '0 15 19 * *' && 'students' || 'admin') }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '0' }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_WEBHOOK_URL: ${{ secrets.MAIL_WEBHOOK_URL }}
+          MAIL_WEBHOOK_SECRET: ${{ secrets.MAIL_WEBHOOK_SECRET }}

@@ -1,6 +1,5 @@
 // Usage: node scripts/send-emails.mjs students|admin   (set DRY_RUN=1 to print instead of sending)
 import admin from "firebase-admin";
-import nodemailer from "nodemailer";
 import { cycleRange, hoursOf, adminEmail, studentEmail, r2 } from "./lib.mjs";
 
 const mode = process.argv[2];
@@ -9,10 +8,11 @@ const SITE = process.env.SITE_URL || "https://murallabsdsu.github.io/labhours/";
 const DRY = process.env.DRY_RUN === "1";
 admin.initializeApp({ credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)) });
 const db = admin.firestore();
-const mail = DRY ? null : nodemailer.createTransport({ host: process.env.SMTP_HOST || "smtp-relay.brevo.com", port: Number(process.env.SMTP_PORT || 587), secure: false, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
 const send = async (to, m) => {
   if (DRY) { console.log("DRY RUN to", to, "|", m.subject); return; }
-  await mail.sendMail({ from: `Lab Hours Log <${process.env.MAIL_FROM}>`, to, subject: m.subject, html: m.html });
+  const r = await fetch(process.env.MAIL_WEBHOOK_URL, { method: "POST", headers: { "Content-Type": "text/plain" }, body: JSON.stringify({ secret: process.env.MAIL_WEBHOOK_SECRET, to, subject: m.subject, html: m.html }), redirect: "follow" });
+  const t = await r.text();
+  if (!r.ok || !t.startsWith("ok")) throw new Error("Mail webhook failed: " + t.slice(0, 200));
   console.log("sent to", to);
 };
 const cyc = cycleRange(new Date());
