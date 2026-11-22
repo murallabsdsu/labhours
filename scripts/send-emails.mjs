@@ -9,10 +9,10 @@ const SITE = process.env.SITE_URL || "https://murallabsdsu.github.io/labhours/";
 const DRY = process.env.DRY_RUN === "1";
 admin.initializeApp({ credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)) });
 const db = admin.firestore();
-const mail = DRY ? null : nodemailer.createTransport({ service: "gmail", auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD } });
+const mail = DRY ? null : nodemailer.createTransport({ host: process.env.SMTP_HOST || "smtp-relay.brevo.com", port: Number(process.env.SMTP_PORT || 587), secure: false, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
 const send = async (to, m) => {
   if (DRY) { console.log("DRY RUN to", to, "|", m.subject); return; }
-  await mail.sendMail({ from: `Lab Hours Log <${process.env.GMAIL_USER}>`, to, subject: m.subject, html: m.html });
+  await mail.sendMail({ from: `Lab Hours Log <${process.env.MAIL_FROM}>`, to, subject: m.subject, html: m.html });
   console.log("sent to", to);
 };
 const cyc = cycleRange(new Date());

@@ -58,10 +58,12 @@ GitHub Pages on a free plan needs a public repo. That is safe: the repo holds co
 One-time setup:
 
 1. Firebase console > Project settings (gear) > **Service accounts** > **Generate new private key**. A JSON file downloads. Never commit it.
-2. GitHub repo > **Settings > Secrets and variables > Actions > New repository secret**. Add:
+2. Make a free account at https://www.brevo.com (no card, no 2-step verification needed). Go to **Senders, Domains & Dedicated IPs > Senders > Add a sender**, enter the address the emails should come from (for example your SDSU address), and click the confirmation link Brevo emails you. Then go to **SMTP & API > SMTP** and click **Generate a new SMTP key**. Note the **Login** shown there.
+3. GitHub repo > **Settings > Secrets and variables > Actions > New repository secret**. Add:
    - `FIREBASE_SERVICE_ACCOUNT`: paste the whole JSON file contents.
-   - `GMAIL_USER`: the Gmail address that sends the mail.
-   - `GMAIL_APP_PASSWORD`: a Google **App password** (turn on 2-Step Verification for that Gmail, then https://myaccount.google.com/apppasswords).
-3. Test: GitHub repo > **Actions > Monthly emails > Run workflow**, pick `admin`, leave **dry run** ticked, run, and read the log. Run again with dry run unticked to send a real email.
+   - `SMTP_USER`: the SMTP **Login** from Brevo.
+   - `SMTP_PASS`: the SMTP key.
+   - `MAIL_FROM`: the sender address you confirmed in Brevo.
+4. Test: GitHub repo > **Actions > Monthly emails > Run workflow**, pick `admin`, leave **dry run** ticked, run, and read the log. Run again with dry run unticked to send a real email.
 
 Notes: GitHub pauses scheduled workflows after 60 days with no repo activity, so re-enable it in the Actions tab if emails stop. Scheduled runs can start a few minutes late.
