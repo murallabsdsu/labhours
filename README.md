@@ -41,3 +41,27 @@ Students open the site, create an account with their email, and wait. In **Accou
 ## Keep it public or private?
 
 GitHub Pages on a free plan needs a public repo. That is safe: the repo holds code only. Names, emails and hours live in Firebase behind login. Never commit exports or CSV files to this repo.
+
+## Settings (supervisor)
+
+- **Places:** add or remove the Where choices.
+- **Extra fields on every entry:** add text, number or pick-from-list fields; mark them required; edit names and choices; remove them. Removed fields are hidden, and old entries keep their values.
+- **Student profile fields:** Student ID, phone, program, start date, weekly limit are the defaults. Add, rename or remove fields. They are editable per student under **Accounts > Edit profile**, together with private notes only the supervisor sees.
+- **Dashboard:** each student's tile has one button, **Approve all waiting**, which approves everything that student has logged, across all dates.
+
+## Monthly emails (free, runs on GitHub Actions)
+
+- The **19th**: each approved student gets a reminder to update hours (3 days before the 22nd).
+- The **22nd**: each supervisor in `admins` gets one summary with a student-by-student table and a button to the Dashboard.
+- Sent at 15:00 UTC (9 AM Central standard time). The hours cycle is the 23rd to the 22nd.
+
+One-time setup:
+
+1. Firebase console > Project settings (gear) > **Service accounts** > **Generate new private key**. A JSON file downloads. Never commit it.
+2. GitHub repo > **Settings > Secrets and variables > Actions > New repository secret**. Add:
+   - `FIREBASE_SERVICE_ACCOUNT`: paste the whole JSON file contents.
+   - `GMAIL_USER`: the Gmail address that sends the mail.
+   - `GMAIL_APP_PASSWORD`: a Google **App password** (turn on 2-Step Verification for that Gmail, then https://myaccount.google.com/apppasswords).
+3. Test: GitHub repo > **Actions > Monthly emails > Run workflow**, pick `admin`, leave **dry run** ticked, run, and read the log. Run again with dry run unticked to send a real email.
+
+Notes: GitHub pauses scheduled workflows after 60 days with no repo activity, so re-enable it in the Actions tab if emails stop. Scheduled runs can start a few minutes late.

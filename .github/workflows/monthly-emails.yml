@@ -1,0 +1,32 @@
+name: Monthly emails
+on:
+  schedule:
+    - cron: "0 15 19 * *"   # 19th, 3 days before the 22nd: reminder to students (15:00 UTC = 9 AM CST)
+    - cron: "0 15 22 * *"   # 22nd: approval email to the supervisor
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Which email to send"
+        type: choice
+        options: [students, admin]
+        default: admin
+      dry_run:
+        description: "Dry run (print, do not send)"
+        type: boolean
+        default: true
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --prefix scripts --no-audit --no-fund
+      - run: node scripts/send-emails.mjs "$MODE"
+        env:
+          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || (github.event.schedule == '0 15 19 * *' && 'students' || 'admin') }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '0' }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}

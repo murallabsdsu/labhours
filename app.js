@@ -1,4 +1,4 @@
-import * as F from "./fb.js?v=6";
+import * as F from "./fb.js?v=7";
 const { auth, db } = F;
 
 const DEF_LOCS = ["Lab", "Greenhouse", "Field", "Computer or office", "Other"];
@@ -24,8 +24,22 @@ let me = null, isAdmin = false, profile = null, view = "dash", month = todayS.sl
 let locations = DEF_LOCS.slice(), entries = [], users = {}, unsubs = [];
 let busy = false, editingId = null, selLoc = "", armed = null, armTimer = null;
 let fStudent = "all", fStatus = "all", returningId = null, returnNote = "", addOpen = false, addErr = "";
-let addForm = { uid: "", date: "", start: "", end: "", loc: "", place: "", task: "", approve: true };
+let addForm = { uid: "", date: "", start: "", end: "", loc: "", place: "", task: "", approve: true, extra: {} };
 let authMode = "in", autoMade = false;
+const DEF_PROFILE = [{ key: "student_id", label: "Student ID" }, { key: "phone", label: "Phone" }, { key: "program", label: "Program / year" }, { key: "start_date", label: "Start date" }, { key: "weekly_cap", label: "Weekly hour limit" }];
+let fields = [], profileFields = DEF_PROFILE.slice(), notes = {}, editingProfile = null;
+const slug = (t) => (String(t).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 20) || "field") + "_" + Math.random().toString(36).slice(2, 5);
+function validField(f) { return f && /^[a-z0-9_]{1,30}$/.test(f.key || "") && typeof f.label === "string" && f.label.length >= 1 && f.label.length <= 40 && ["text", "select", "number"].includes(f.type); }
+const cleanField = (f) => ({ key: f.key, label: f.label.slice(0, 40), type: f.type, required: f.required === true, options: Array.isArray(f.options) ? f.options.filter((o) => typeof o === "string" && o.length && o.length <= 40).slice(0, 20) : [] });
+const extraBody = (obj) => { const o = {}; Object.keys(obj || {}).forEach((k) => { const v = String(obj[k] == null ? "" : obj[k]).trim(); if (v) o[k] = v.slice(0, 200); }); return o; };
+function fieldHtml(f, pre, vals) {
+  const id = pre + f.key, v = (vals && vals[f.key]) || "";
+  if (f.type === "select") return `<label>${esc(f.label)}<select id="${esc(id)}"><option value="">Choose…</option>${f.options.map((o) => `<option${o === v ? " selected" : ""}>${esc(o)}</option>`).join("")}</select></label>`;
+  return `<label>${esc(f.label)}<input id="${esc(id)}" type="${f.type === "number" ? "number" : "text"}" ${f.type === "number" ? 'step="any"' : ""} maxlength="200" value="${esc(v)}"></label>`;
+}
+function readExtra(pre) { const o = {}; fields.forEach((f) => { const el = $(pre + f.key); if (el) o[f.key] = el.value; }); return o; }
+function extraErr(vals) { for (const f of fields) { const v = String((vals && vals[f.key]) || "").trim(); if (f.required && !v) return `Fill in "${f.label}".`; if (v && f.type === "number" && !isFinite(Number(v))) return `"${f.label}" must be a number.`; } return ""; }
+const extraLine = (r) => fields.filter((f) => r.extra && r.extra[f.key]).map((f) => esc(f.label) + ": " + esc(r.extra[f.key])).join(" · ");
 
 /* ---------- helpers ---------- */
 let toastT = null;
@@ -54,7 +68,7 @@ function norm(id, d) {
   const ms = (t) => (t && t.toMillis ? t.toMillis() : 0);
   return { id, uid: String(d.uid || ""), date: d.date, start: d.start, end: d.end, hours: r2(mins / 60), loc: String(d.loc || "").slice(0, 40), place: String(d.place || "").slice(0, 80),
     task: String(d.task || "").slice(0, 600), status: ["approved", "returned"].includes(d.status) ? d.status : "pending",
-    note: String(d.note || "").slice(0, 300), approvedHours: Number(d.approvedHours) || 0, createdAt: ms(d.createdAt), by: d.addedBy === "owner" ? "owner" : "" };
+    extra: d.extra && typeof d.extra === "object" ? Object.fromEntries(Object.entries(d.extra).filter(([, v]) => typeof v === "string").map(([k, v]) => [k, v.slice(0, 200)])) : {}, note: String(d.note || "").slice(0, 300), approvedHours: Number(d.approvedHours) || 0, createdAt: ms(d.createdAt), by: d.addedBy === "owner" ? "owner" : "" };
 }
 const nameOf = (uid) => (users[uid] && users[uid].name) || "";
 const rows = () => entries.map((e) => norm(e.id, e.data)).filter(Boolean);
@@ -123,6 +137,8 @@ async function startSession(u) {
   unsubs.push(F.onSnapshot(F.doc(db, "settings", "main"), (s) => {
     const d = s.exists() ? s.data() : null;
     if (d && Array.isArray(d.locations)) { const l = d.locations.filter((x) => typeof x === "string" && x.length >= 2 && x.length <= 40).slice(0, 12); if (l.length) locations = l; }
+    if (d && Array.isArray(d.fields)) fields = d.fields.filter(validField).slice(0, 10).map(cleanField);
+    if (d && Array.isArray(d.profileFields)) profileFields = d.profileFields.filter((f) => f && /^[a-z0-9_]{1,30}$/.test(f.key || "") && typeof f.label === "string" && f.label.length <= 40).slice(0, 12);
     render();
   }, () => {}));
   $("who").hidden = false;
@@ -130,7 +146,8 @@ async function startSession(u) {
   $("so").onclick = () => F.signOut(auth);
   if (isAdmin) {
     view = "dash";
-    unsubs.push(F.onSnapshot(F.collection(db, "users"), (s) => { users = {}; s.docs.forEach((d) => { const x = d.data(); users[d.id] = { email: x.email || "", requested: x.requestedName || "", name: x.name || "", approved: x.approved === true }; }); render(); }, onErr));
+    unsubs.push(F.onSnapshot(F.collection(db, "users"), (s) => { users = {}; s.docs.forEach((d) => { const x = d.data(); users[d.id] = { email: x.email || "", requested: x.requestedName || "", name: x.name || "", approved: x.approved === true, info: x.info && typeof x.info === "object" ? x.info : {} }; }); render(); }, onErr));
+    unsubs.push(F.onSnapshot(F.collection(db, "adminNotes"), (s) => { notes = {}; s.docs.forEach((d) => { notes[d.id] = String((d.data() || {}).text || ""); }); render(); }, () => {}));
     unsubs.push(F.onSnapshot(F.collection(db, "entries"), (s) => { entries = s.docs.map((d) => ({ id: d.id, data: d.data() })); render(); }, onErr));
   } else {
     unsubs.push(F.onSnapshot(F.doc(db, "users", u.uid), (s) => {
@@ -175,6 +192,7 @@ function renderStudent() {
     <div class="row3"><label>Start<input id="f-start" type="time"></label><label>End<input id="f-end" type="time"></label><div class="lab"><small>Hours</small><div class="hours-out" id="f-hours">0 h</div></div></div>
     <div class="lab" role="radiogroup"><span>Where did you work?</span><div class="chips" id="f-loc"></div></div>
     <label>Which room, field or plot?<small>Example: Greenhouse 2 bench A, Field 3 rows 1 to 40, Lab room 214.</small><input id="f-place" maxlength="80" autocomplete="off"></label>
+    ${fields.map((f) => fieldHtml(f, "x-", null)).join("")}
     <label>What work did you do?<textarea id="f-task" maxlength="600"></textarea></label>
     <div class="err" id="f-err" role="alert"></div>
     <div class="btnrow"><button class="btn primary" id="f-submit" type="submit">${editingId ? "Save changes" : "Save entry"}</button><button class="btn" id="f-cancel" type="button" ${editingId ? "" : "hidden"}>Cancel</button></div></form>
@@ -185,7 +203,7 @@ function renderStudent() {
   $("f-cancel").onclick = () => { editingId = null; selLoc = ""; renderStudent(); };
   $("f").onsubmit = submitStudent;
   $("f-loc").onclick = (ev) => { const b = ev.target.closest("[data-loc]"); if (!b) return; selLoc = b.dataset.loc; fillLocs(); };
-  if (editingId) { const r = rows().find((x) => x.id === editingId); if (r) { $("f-date").value = r.date; $("f-start").value = r.start; $("f-end").value = r.end; selLoc = r.loc; fillLocs(); $("f-place").value = r.place; $("f-task").value = r.task; calc(); } }
+  if (editingId) { const r = rows().find((x) => x.id === editingId); if (r) { $("f-date").value = r.date; $("f-start").value = r.start; $("f-end").value = r.end; selLoc = r.loc; fillLocs(); $("f-place").value = r.place; $("f-task").value = r.task; fields.forEach((f) => { const el = $("x-" + f.key); if (el) el.value = (r.extra && r.extra[f.key]) || ""; }); calc(); } }
 }
 function fillLocs() {
   const box = $("f-loc"); if (!box) return; if (!locations.includes(selLoc) && selLoc) locations = locations.concat([selLoc]);
@@ -213,10 +231,11 @@ async function submitStudent(ev) {
   else if (!v.loc) err.textContent = "Choose where you worked.";
   else if (needsPlace(v.loc) && v.place.length < 2) err.textContent = "Say which field or place you worked in.";
   else if (v.task.length < 2) err.textContent = "Say what work you did.";
+  else if (extraErr(readExtra("x-"))) err.textContent = extraErr(readExtra("x-"));
   else err.textContent = overlapMsg(me.uid, v.date, v.start, v.end, editingId);
   if (err.textContent) return;
   busy = true; $("f-submit").disabled = true;
-  const body = { uid: me.uid, date: v.date, start: v.start, end: v.end, hours: r2(m / 60), loc: v.loc, place: v.place, task: v.task, status: "pending" };
+  const body = { uid: me.uid, date: v.date, start: v.start, end: v.end, hours: r2(m / 60), loc: v.loc, place: v.place, task: v.task, extra: extraBody(readExtra("x-")), status: "pending" };
   try {
     if (editingId) { body.updatedAt = F.serverTimestamp(); await F.updateDoc(F.doc(db, "entries", editingId), body); toast("Changes saved. It goes back to the supervisor for approval."); }
     else { body.createdAt = F.serverTimestamp(); await F.addDoc(F.collection(db, "entries"), body); toast("Saved. It counts once it is approved."); }
@@ -235,7 +254,7 @@ function renderMineOnly() {
     list.forEach((r) => { if (r.date !== cur) { if (cur) h += "</div>"; cur = r.date; h += `<div class="day"><div class="dayhead"><span>${esc(longDate(r.date))}</span><span class="mono">${fh(tot[r.date])} h</span></div>`; }
       h += `<div class="entry"><div class="meta"><span class="mono muted">${esc(fmtT(r.start))} to ${esc(fmtT(r.end))}</span><span class="mono"><b>${fh(r.hours)} h</b></span>${pill(r)}${byPill(r)}${isLate(r) ? '<span class="pill bad">Late</span>' : ""}</div>
       <div class="acts">${r.status !== "approved" ? `<button class="btn sm" data-edit="${esc(r.id)}">Edit</button><button class="btn sm danger" data-del="${esc(r.id)}">Delete</button>` : ""}</div>
-      ${r.note && r.status === "returned" ? `<div class="note">Returned: ${esc(r.note)}</div>` : ""}<div class="out"><b>Where:</b> ${esc(whereOf(r))}</div><div class="what">${esc(r.task)}</div></div>`; });
+      ${r.note && r.status === "returned" ? `<div class="note">Returned: ${esc(r.note)}</div>` : ""}<div class="out"><b>Where:</b> ${esc(whereOf(r))}</div><div class="what">${esc(r.task)}</div>${extraLine(r) ? `<div class="out">${extraLine(r)}</div>` : ""}</div>`; });
     h += "</div>"; }
   box.innerHTML = h;
   box.onclick = async (ev) => {
@@ -251,15 +270,28 @@ function mondayOf(s) { const d = parseD(s); d.setDate(d.getDate() - ((d.getDay()
 /* ---------- admin ---------- */
 const pendingUsers = () => Object.keys(users).filter((u) => !users[u].approved);
 function renderAccounts() {
-  const pend = pendingUsers(), appr = Object.keys(users).filter((u) => users[u].approved);
+  const pend = pendingUsers(), appr = Object.keys(users).filter((u) => users[u].approved).sort((x, y) => nameOf(x).localeCompare(nameOf(y)));
+  const prof = (u) => `<div class="card" style="margin:8px 0 12px;background:var(--bg)"><h3 style="margin:0 0 10px">Edit profile</h3>
+    <div class="row2"><label>Name<input id="pf-name" maxlength="40" value="${esc(users[u].name)}"></label><label>Email (from login)<input value="${esc(users[u].email)}" disabled></label></div>
+    <div class="row2" style="margin-top:10px">${profileFields.map((f) => `<label>${esc(f.label)}<input id="pf-${esc(f.key)}" maxlength="120" value="${esc((users[u].info || {})[f.key] || "")}"></label>`).join("")}</div>
+    <label style="margin-top:10px">Private notes (only you see these)<textarea id="pf-notes" maxlength="1000">${esc(notes[u] || "")}</textarea></label>
+    <div class="btnrow" style="margin-top:10px"><button class="btn primary" data-save-profile="${esc(u)}">Save profile</button><button class="btn" data-close-profile>Cancel</button></div></div>`;
   let h = `<div class="card"><h3>Waiting for approval</h3>${pend.length ? pend.map((u) => `<div class="srow"><span><b>${esc(users[u].requested || "(no name)")}</b> <span class="muted">${esc(users[u].email)}</span></span><span class="ctrl"><input data-nm="${esc(u)}" value="${esc(users[u].requested)}" maxlength="40" aria-label="Name to use"><button class="btn sm" data-approve-user="${esc(u)}">Approve</button></span></div>`).join("") : '<p class="empty">No one is waiting.</p>'}
   <p class="tfoot-note">Check the email before you approve. The name you type here is the name used for all of that student's hours.</p></div>
-  <div class="card"><h3>Approved students</h3>${appr.length ? appr.map((u) => `<div class="srow"><span><b>${esc(users[u].name)}</b> <span class="muted">${esc(users[u].email)}</span></span><button class="btn sm danger" data-revoke="${esc(u)}">Remove access</button></div>`).join("") : '<p class="empty">None yet.</p>'}
-  <p class="tfoot-note">Removing access stops the student from logging more hours. Their past entries stay.</p></div>`;
+  <div class="card"><h3>Students</h3>${appr.length ? appr.map((u) => `<div class="srow"><span><b>${esc(users[u].name)}</b> <span class="muted">${esc(users[u].email)}</span></span><span class="ctrl"><button class="btn sm" data-edit-profile="${esc(u)}">${editingProfile === u ? "Close" : "Edit profile"}</button><button class="btn sm danger" data-revoke="${esc(u)}">Remove access</button></span></div>${editingProfile === u ? prof(u) : ""}`).join("") : '<p class="empty">None yet.</p>'}
+  <p class="tfoot-note">Removing access stops the student from logging more hours. Their past entries stay. Profile fields can be changed in Settings.</p></div>`;
   $("main").innerHTML = h;
   $("main").onclick = async (ev) => {
-    const a = ev.target.closest("[data-approve-user]"), r = ev.target.closest("[data-revoke]");
+    const a = ev.target.closest("[data-approve-user]"), r = ev.target.closest("[data-revoke]"), ep = ev.target.closest("[data-edit-profile]"), sp = ev.target.closest("[data-save-profile]");
     try {
+      if (ep) { editingProfile = editingProfile === ep.dataset.editProfile ? null : ep.dataset.editProfile; render(); return; }
+      if (ev.target.closest("[data-close-profile]")) { editingProfile = null; render(); return; }
+      if (sp) { const u = sp.dataset.saveProfile, nm = $("pf-name").value.trim().replace(/\s+/g, " ");
+        if (!NAME_RE.test(nm)) { toast("Use letters only for the name."); return; }
+        if (approvedStudents().some((x) => x !== u && nameOf(x).toLowerCase() === nm.toLowerCase())) { toast("That name is already used. Add a last initial."); return; }
+        const info = {}; profileFields.forEach((f) => { const v = $("pf-" + f.key).value.trim(); if (v) info[f.key] = v.slice(0, 120); });
+        const noteText = $("pf-notes").value.slice(0, 1000); sp.disabled = true; editingProfile = null;
+        await F.setDoc(F.doc(db, "adminNotes", u), { text: noteText }); await F.updateDoc(F.doc(db, "users", u), { name: nm, info }); toast("Profile saved"); render(); return; }
       if (a) { const u = a.dataset.approveUser, inp = $("main").querySelector(`[data-nm="${u}"]`), nm = inp.value.trim().replace(/\s+/g, " ");
         if (!NAME_RE.test(nm)) { toast("Use letters only for the name."); return; }
         if (approvedStudents().some((x) => nameOf(x).toLowerCase() === nm.toLowerCase())) { toast("That name is already used. Add a last initial."); return; }
@@ -268,20 +300,50 @@ function renderAccounts() {
     } catch (e) { toast(errMsg(e)); }
   };
 }
+const saveSettings = (patch) => F.setDoc(F.doc(db, "settings", "main"), Object.assign({ locations, fields, profileFields }, patch));
 function renderSettings() {
+  const fieldRow = (f) => `<div class="srow" style="align-items:flex-end"><span class="ctrl" style="flex:1"><label style="flex:1;min-width:160px">Label<input id="fl-${esc(f.key)}" maxlength="40" value="${esc(f.label)}"></label>
+     ${f.type === "select" ? `<label style="flex:1;min-width:160px">Choices (comma separated)<input id="fo-${esc(f.key)}" value="${esc(f.options.join(", "))}"></label>` : `<span class="pill soft">${f.type === "number" ? "Number" : "Text"}</span>`}
+     <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="fr-${esc(f.key)}"${f.required ? " checked" : ""}> Required</label></span>
+     <span class="ctrl"><button class="btn sm" data-set="save-field" data-key="${esc(f.key)}">Save</button><button class="btn sm danger" data-set="rm-field" data-key="${esc(f.key)}">Remove</button></span></div>`;
   $("main").innerHTML = `<div class="card"><h3>Places to choose from</h3>${locations.map((l) => `<div class="srow"><span>${esc(l)}</span><button class="btn sm danger" data-rm="${esc(l)}">Remove</button></div>`).join("")}
   <div class="ctrl" style="margin-top:12px"><input id="new-loc" maxlength="40" placeholder="New place, for example Sorghum field" style="max-width:320px"><button class="btn" data-add-loc>Add</button></div>
   <p class="tfoot-note">Places with the words field or other ask the student for the exact spot.</p></div>
+  <div class="card"><h3>Extra fields on every entry</h3>${fields.length ? fields.map(fieldRow).join("") : '<p class="empty">No extra fields yet. Date, start, end, where, room or plot and work done are always there.</p>'}
+  <div class="ctrl" style="margin-top:14px;align-items:flex-end"><label style="min-width:180px">New field name<input id="nf-label" maxlength="40" placeholder="For example Project or trial"></label>
+   <label>Type<select id="nf-type"><option value="text">Text</option><option value="select">Pick from a list</option><option value="number">Number</option></select></label>
+   <label style="min-width:200px">Choices (for a list)<input id="nf-opts" placeholder="NUE trial, GWAS panel, Other"></label>
+   <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="nf-req"> Required</label><button class="btn" data-set="add-field">Add field</button></div>
+  <p class="tfoot-note">Up to 10 fields. Removing a field hides it, and old entries keep what was typed. Required is checked in the form on the page.</p></div>
+  <div class="card"><h3>Student profile fields</h3>${profileFields.map((f) => `<div class="srow"><span class="ctrl"><input id="pl-${esc(f.key)}" maxlength="40" value="${esc(f.label)}"></span><span class="ctrl"><button class="btn sm" data-set="save-pfield" data-key="${esc(f.key)}">Save</button><button class="btn sm danger" data-set="rm-pfield" data-key="${esc(f.key)}">Remove</button></span></div>`).join("") || '<p class="empty">None.</p>'}
+  <div class="ctrl" style="margin-top:12px"><input id="np-label" maxlength="40" placeholder="New profile field, for example Advisor" style="max-width:320px"><button class="btn" data-set="add-pfield">Add</button></div>
+  <p class="tfoot-note">These appear when you edit a student under Accounts. Only you can see and change them.</p></div>
   <div class="card"><h3>Backup</h3><button class="btn primary" data-backup>Download everything (CSV)</button><p class="tfoot-note">Download once a month and keep it with your lab records.</p></div>`;
   $("main").onclick = async (ev) => {
     try {
       if (ev.target.closest("[data-backup]")) { const rs = rows(); downloadCsv("lab-hours-backup-" + todayS + ".csv", buildCsv(rs, "Approved hours (all time)", aggregate(rs), approvedStudents())); return; }
-      const rm = ev.target.closest("[data-rm]"); if (rm) { if (locations.length <= 1) { toast("Keep at least one place."); return; } await F.setDoc(F.doc(db, "settings", "main"), { locations: locations.filter((x) => x !== rm.dataset.rm) }); toast("Saved"); return; }
+      const rm = ev.target.closest("[data-rm]"); if (rm) { if (locations.length <= 1) { toast("Keep at least one place."); return; } await saveSettings({ locations: locations.filter((x) => x !== rm.dataset.rm) }); toast("Saved"); return; }
       if (ev.target.closest("[data-add-loc]")) { const v = $("new-loc").value.trim().replace(/\s+/g, " ");
         if (v.length < 2 || v.length > 40) { toast("Place names need 2 to 40 characters."); return; }
         if (locations.some((x) => x.toLowerCase() === v.toLowerCase())) { toast("Already in the list."); return; }
         if (locations.length >= 12) { toast("The list is full."); return; }
-        await F.setDoc(F.doc(db, "settings", "main"), { locations: locations.concat([v]) }); toast("Saved"); }
+        await saveSettings({ locations: locations.concat([v]) }); toast("Saved"); return; }
+      const st = ev.target.closest("[data-set]"); if (!st) return; const act = st.dataset.set, key = st.dataset.key;
+      if (act === "add-field") { const label = $("nf-label").value.trim().replace(/\s+/g, " "), type = $("nf-type").value, opts = $("nf-opts").value.split(",").map((x) => x.trim()).filter(Boolean);
+        if (!label) { toast("Type a field name."); return; } if (fields.length >= 10) { toast("The list is full (10 fields)."); return; }
+        if (type === "select" && opts.length < 2) { toast("Give at least two choices, separated by commas."); return; }
+        await saveSettings({ fields: fields.concat([cleanField({ key: slug(label), label, type, required: $("nf-req").checked, options: opts })]) }); toast("Field added"); return; }
+      if (act === "save-field") { const label = $("fl-" + key).value.trim().replace(/\s+/g, " "); if (!label) { toast("Name can't be empty."); return; }
+        const o = $("fo-" + key); const opts = o ? o.value.split(",").map((x) => x.trim()).filter(Boolean) : null; if (o && opts.length < 2) { toast("Give at least two choices."); return; }
+        await saveSettings({ fields: fields.map((f) => f.key === key ? cleanField(Object.assign({}, f, { label, required: $("fr-" + key).checked, options: opts || f.options })) : f) }); toast("Saved"); return; }
+      if (act === "rm-field") { if (armed !== "rf" + key) { armed = "rf" + key; clearTimeout(armTimer); armTimer = setTimeout(() => { armed = null; renderSettings(); }, 4000); st.textContent = "Tap again to remove"; return; }
+        armed = null; await saveSettings({ fields: fields.filter((f) => f.key !== key) }); toast("Field removed"); return; }
+      if (act === "add-pfield") { const label = $("np-label").value.trim().replace(/\s+/g, " "); if (!label) { toast("Type a field name."); return; } if (profileFields.length >= 12) { toast("The list is full."); return; }
+        await saveSettings({ profileFields: profileFields.concat([{ key: slug(label), label }]) }); toast("Field added"); return; }
+      if (act === "save-pfield") { const label = $("pl-" + key).value.trim().replace(/\s+/g, " "); if (!label) { toast("Name can't be empty."); return; }
+        await saveSettings({ profileFields: profileFields.map((f) => f.key === key ? { key, label } : f) }); toast("Saved"); return; }
+      if (act === "rm-pfield") { if (armed !== "rp" + key) { armed = "rp" + key; clearTimeout(armTimer); armTimer = setTimeout(() => { armed = null; renderSettings(); }, 4000); st.textContent = "Tap again to remove"; return; }
+        armed = null; await saveSettings({ profileFields: profileFields.filter((f) => f.key !== key) }); toast("Field removed"); return; }
     } catch (e) { toast(errMsg(e)); }
   };
 }
@@ -292,9 +354,9 @@ function aggregate(rs) {
 }
 function csvCell(v) { let s = String(v == null ? "" : v); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
 function buildCsv(rs, label, A, studs) {
-  const L = [["Student", "Date", "Start", "End", "Hours logged", "Hours approved", "Status", "Where", "Work done", "Email"].join(",")];
+  const L = [["Student", "Date", "Start", "End", "Hours logged", "Hours approved", "Status", "Where", "Work done"].concat(fields.map((f) => csvCell(f.label)), ["Email"]).join(",")];
   rs.slice().sort((a, b) => nameOf(a.uid).localeCompare(nameOf(b.uid)) || (a.date + a.start).localeCompare(b.date + b.start)).forEach((r) =>
-    L.push([csvCell(nameOf(r.uid)), r.date, r.start, r.end, r.hours, apprH(r), r.status, csvCell(whereOf(r)), csvCell(r.task), csvCell((users[r.uid] || {}).email)].join(",")));
+    L.push([csvCell(nameOf(r.uid)), r.date, r.start, r.end, r.hours, apprH(r), r.status, csvCell(whereOf(r)), csvCell(r.task)].concat(fields.map((f) => csvCell((r.extra || {})[f.key] || "")), [csvCell((users[r.uid] || {}).email)]).join(",")));
   L.push(""); L.push("Student," + label); studs.forEach((u) => L.push(csvCell(nameOf(u)) + "," + r2((A[u] || { appr: 0 }).appr)));
   return L.join("\r\n");
 }
@@ -308,9 +370,10 @@ function renderDash() {
    <label style="flex-direction:row;align-items:center;gap:6px">Status<select id="d-status">${[["all", "All"], ["pending", "Waiting for approval"], ["returned", "Returned"], ["approved", "Approved"]].map(([k, l]) => `<option value="${k}"${fStatus === k ? " selected" : ""}>${l}</option>`).join("")}</select></label></div>`;
   if (np) h += `<div class="strip attn"><b>${np} account${np > 1 ? "s" : ""} waiting for approval</b><button class="btn" data-go="acc">Open Accounts</button></div>`;
   h += wait || ret ? `<div class="strip"><div><b>${wait} waiting for your approval</b>${ret ? ` <span class="muted">· ${ret} returned to students</span>` : ""}<div class="muted" style="font-size:12.5px">Across all months. Use the Status filter to see them.</div></div></div>` : '<div class="strip clear"><b>Nothing waiting. Every entry has been approved.</b></div>';
+  const pend = {}; all.forEach((r) => { if (r.status === "pending") { const o = pend[r.uid] || (pend[r.uid] = { n: 0, h: 0 }); o.n++; o.h += r.hours; } });
   let totA = 0, totP = 0; studs.forEach((u) => { totA += A[u].appr; totP += A[u].pend; });
   h += `<div class="tiles">${studs.map((u) => { const last = A[u].last || all.filter((r) => r.uid === u).map((r) => r.date).sort().pop() || ""; const ago = last ? dayDiff(todayS, last) : null;
-    return `<div class="tile" style="--c:${CV(u)}"><div class="who2"><i class="dot"></i>${esc(nameOf(u))}</div><div class="big">${fh(A[u].appr)}<small>h approved</small></div><div class="sub">${A[u].pend > 0 ? `<span class="pill warn">${fh(A[u].pend)} h waiting</span>` : "<span>Nothing waiting</span>"}<span>${A[u].n} entries</span></div><div class="sub">${last ? "Last log " + esc(shortDate(last)) + (ago === 0 ? " (today)" : " (" + ago + " d ago)") : "No entries yet"}${ago !== null && ago >= 3 ? ` <span class="pill warn">No log for ${ago} days</span>` : ""}</div></div>`; }).join("")}
+    return `<div class="tile" style="--c:${CV(u)}"><div class="who2"><i class="dot"></i>${esc(nameOf(u))}</div><div class="big">${fh(A[u].appr)}<small>h approved</small></div><div class="sub">${A[u].pend > 0 ? `<span class="pill warn">${fh(A[u].pend)} h waiting</span>` : "<span>Nothing waiting</span>"}<span>${A[u].n} entries</span></div><div class="sub">${last ? "Last log " + esc(shortDate(last)) + (ago === 0 ? " (today)" : " (" + ago + " d ago)") : "No entries yet"}${ago !== null && ago >= 3 ? ` <span class="pill warn">No log for ${ago} days</span>` : ""}</div>${pend[u] ? `<button class="btn sm" data-act="approve-student" data-uid="${esc(u)}">Approve all waiting (${pend[u].n} entries, ${fh(pend[u].h)} h)</button>` : ""}</div>`; }).join("")}
    <div class="tile total"><div class="who2">All students</div><div class="big">${fh(totA)}<small>h approved</small></div><div class="sub"><span>${fh(totP)} h waiting</span></div></div></div>`;
   /* year table */
   const yr = month.slice(0, 4), curM = +month.slice(5) - 1, Y = {}; studs.forEach((u) => (Y[u] = Array(12).fill(0)));
@@ -326,8 +389,9 @@ function renderDash() {
   h += `<div class="card"><div class="tbar"><h3 style="margin:0">Entries</h3><div class="ctrl"><button class="btn" data-act="add-open">${addOpen ? "Close add form" : "Add entry for a student"}</button>${todo ? `<button class="btn" data-act="approve-all">Approve all waiting (${todo})</button>` : ""}<button class="btn" data-act="csv">Download CSV</button></div></div>`;
   if (addOpen) h += addPanel(studs);
   h += fr.length ? `<div class="scroll"><table><thead><tr><th>Date</th><th>Student</th><th>Time</th><th class="n">Hours</th><th>Where</th><th>Work done</th><th>Status</th><th></th></tr></thead><tbody>${fr.map((r) => {
-    const act = r.status === "approved" ? `<button class="btn sm" data-act="unapprove" data-id="${esc(r.id)}">Undo</button>` : `<div class="ctrl"><button class="btn sm" data-act="approve" data-id="${esc(r.id)}">Approve</button>${r.status === "returned" ? "" : `<button class="btn sm" data-act="return" data-id="${esc(r.id)}">Return</button>`}</div>`;
-    let row = `<tr><td class="mono" style="white-space:nowrap">${esc(shortDate(r.date))}${isLate(r) ? ' <span class="pill bad">Late</span>' : ""}${dayTot[r.uid + "|" + r.date] > 10 ? ` <span class="pill warn">${fh(dayTot[r.uid + "|" + r.date])} h that day</span>` : ""}</td><td style="white-space:nowrap"><i class="dot" style="--c:${CV(r.uid)}"></i> ${esc(nameOf(r.uid))}</td><td class="mono muted" style="white-space:nowrap">${esc(fmtT(r.start))} to ${esc(fmtT(r.end))}</td><td class="n mono">${fh(r.hours)}</td><td class="what">${esc(whereOf(r))}</td><td class="what">${esc(r.task)}</td><td>${pill(r)}${byPill(r)}${r.note && r.status === "returned" ? `<div class="muted" style="font-size:12px;max-width:180px;overflow-wrap:anywhere">${esc(r.note)}</div>` : ""}</td><td>${act}</td></tr>`;
+    const del = `<button class="btn sm danger" data-act="delete" data-id="${esc(r.id)}">Delete</button>`;
+    const act = r.status === "approved" ? `<div class="ctrl"><button class="btn sm" data-act="unapprove" data-id="${esc(r.id)}">Undo</button>${del}</div>` : `<div class="ctrl"><button class="btn sm" data-act="approve" data-id="${esc(r.id)}">Approve</button>${r.status === "returned" ? "" : `<button class="btn sm" data-act="return" data-id="${esc(r.id)}">Return</button>`}${del}</div>`;
+    let row = `<tr><td class="mono" style="white-space:nowrap">${esc(shortDate(r.date))}${isLate(r) ? ' <span class="pill bad">Late</span>' : ""}${dayTot[r.uid + "|" + r.date] > 10 ? ` <span class="pill warn">${fh(dayTot[r.uid + "|" + r.date])} h that day</span>` : ""}</td><td style="white-space:nowrap"><i class="dot" style="--c:${CV(r.uid)}"></i> ${esc(nameOf(r.uid))}</td><td class="mono muted" style="white-space:nowrap">${esc(fmtT(r.start))} to ${esc(fmtT(r.end))}</td><td class="n mono">${fh(r.hours)}</td><td class="what">${esc(whereOf(r))}</td><td class="what">${esc(r.task)}${extraLine(r) ? `<div class="muted" style="font-size:12.5px">${extraLine(r)}</div>` : ""}</td><td>${pill(r)}${byPill(r)}${r.note && r.status === "returned" ? `<div class="muted" style="font-size:12px;max-width:180px;overflow-wrap:anywhere">${esc(r.note)}</div>` : ""}</td><td>${act}</td></tr>`;
     if (returningId === r.id) row += `<tr class="sub"><td colspan="8"><div class="retin"><input id="ret-note" maxlength="300" value="${esc(returnNote)}" placeholder="What should the student fix?"><button class="btn sm" data-act="return-send" data-id="${esc(r.id)}">Send back</button><button class="btn sm" data-act="return-cancel">Cancel</button></div></td></tr>`;
     return row; }).join("")}</tbody></table></div>` : '<p class="empty">No entries match. Change the month or the filters above.</p>';
   h += `<p class="tfoot-note">Only approved hours count. Approved entries are locked: students cannot edit or delete them. Hours are always calculated from start and end times.</p></div>`;
@@ -335,7 +399,7 @@ function renderDash() {
   $("m-prev").onclick = () => { month = shiftMonth(month, -1); render(); }; $("m-next").onclick = () => { month = shiftMonth(month, 1); render(); };
   $("y-prev").onclick = () => { month = shiftMonth(month, -12); render(); }; $("y-next").onclick = () => { month = shiftMonth(month, 12); render(); };
   $("d-student").onchange = (e) => { fStudent = e.target.value; render(); }; $("d-status").onchange = (e) => { fStatus = e.target.value; render(); };
-  $("main").oninput = (e) => { const id = e.target.id; if (id === "ret-note") returnNote = e.target.value; const m = { "a-uid": "uid", "a-date": "date", "a-start": "start", "a-end": "end", "a-loc": "loc", "a-place": "place", "a-task": "task" }; if (m[id]) addForm[m[id]] = e.target.value; else if (id === "a-approve") addForm.approve = e.target.checked; };
+  $("main").oninput = (e) => { const id = e.target.id; if (id === "ret-note") returnNote = e.target.value; const m = { "a-uid": "uid", "a-date": "date", "a-start": "start", "a-end": "end", "a-loc": "loc", "a-place": "place", "a-task": "task" }; if (id.startsWith("ax-")) addForm.extra[id.slice(3)] = e.target.value; else if (m[id]) addForm[m[id]] = e.target.value; else if (id === "a-approve") addForm.approve = e.target.checked; };
   $("main").onchange = (e) => { if (e.target.id === "a-approve") addForm.approve = e.target.checked; };
   $("main").onclick = (ev) => dashClick(ev, fr);
 }
@@ -346,6 +410,7 @@ function addPanel(studs) {
    <div class="row2"><label>Student<select id="a-uid">${studs.map((u) => `<option value="${esc(u)}"${u === f.uid ? " selected" : ""}>${esc(nameOf(u))}</option>`).join("")}</select></label><label>Date<input id="a-date" type="date" max="${todayS}" value="${esc(f.date)}"></label></div>
    <div class="row2"><label>Start<input id="a-start" type="time" value="${esc(f.start)}"></label><label>End<input id="a-end" type="time" value="${esc(f.end)}"></label></div>
    <div class="row2"><label>Where<select id="a-loc"><option value="">Choose…</option>${locations.map((l) => `<option${l === f.loc ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label><label>Room, field or plot<input id="a-place" maxlength="80" value="${esc(f.place)}"></label></div>
+   ${fields.map((x) => fieldHtml(x, "ax-", f.extra)).join("")}
    <label>Work done<textarea id="a-task" maxlength="600">${esc(f.task)}</textarea></label>
    <label style="flex-direction:row;align-items:center;gap:8px"><input id="a-approve" type="checkbox"${f.approve ? " checked" : ""}> Approve it now</label>
    <div class="err" role="alert">${esc(addErr)}</div><div class="btnrow"><button class="btn primary" type="button" data-act="add-save">Save entry</button></div></form>`;
@@ -359,6 +424,13 @@ async function dashClick(ev, fr) {
     if (act === "add-open") { addOpen = !addOpen; addErr = ""; if (document.activeElement) document.activeElement.blur(); render(); return; }
     if (act === "add-save") { await saveAdded(b); return; }
     if (act === "approve") { const r = find(); if (!r) return; b.disabled = true; await F.updateDoc(F.doc(db, "entries", id), { status: "approved", approvedHours: r.hours, approvedAt: F.serverTimestamp(), note: "" }); toast("Approved"); }
+    else if (act === "delete") {
+      if (armed !== "d" + id) { armed = "d" + id; clearTimeout(armTimer); armTimer = setTimeout(() => { armed = null; render(); }, 4000); b.textContent = "Tap again to delete"; return; }
+      armed = null; clearTimeout(armTimer); b.disabled = true; await F.deleteDoc(F.doc(db, "entries", id)); toast("Entry deleted"); }
+    else if (act === "approve-student") {
+      const uidS = b.dataset.uid, list = rs.filter((r) => r.uid === uidS && r.status === "pending"); if (!list.length) return; b.disabled = true;
+      for (let i = 0; i < list.length; i += 400) { const wb = F.writeBatch(db); list.slice(i, i + 400).forEach((r) => wb.update(F.doc(db, "entries", r.id), { status: "approved", approvedHours: r.hours, approvedAt: F.serverTimestamp(), note: "" })); await wb.commit(); }
+      toast("Approved " + list.length + " entries for " + nameOf(uidS)); }
     else if (act === "unapprove") { b.disabled = true; await F.updateDoc(F.doc(db, "entries", id), { status: "pending", approvedHours: 0 }); toast("Approval removed"); }
     else if (act === "return") { returningId = id; returnNote = ""; render(); const i = $("ret-note"); if (i) i.focus(); }
     else if (act === "return-cancel") { returningId = null; returnNote = ""; if (document.activeElement) document.activeElement.blur(); render(); }
@@ -376,11 +448,11 @@ async function saveAdded(btn) {
   const f = addForm, m = f.start && f.end ? toMin(f.end) - toMin(f.start) : 0, place = f.place.trim(), task = f.task.trim(); addErr = "";
   if (!f.uid) addErr = "Choose a student."; else if (!/^\d{4}-\d{2}-\d{2}$/.test(f.date)) addErr = "Pick the date."; else if (f.date > todayS) addErr = "The date can't be in the future.";
   else if (!f.start || !f.end) addErr = "Enter start and end time."; else if (m <= 0) addErr = "End time must be after start time."; else if (m > 720) addErr = "One entry can't be longer than 12 hours.";
-  else if (!f.loc) addErr = "Choose where it was done."; else if (needsPlace(f.loc) && place.length < 2) addErr = "Say which field or place."; else if (task.length < 2) addErr = "Say what work was done."; else addErr = overlapMsg(f.uid, f.date, f.start, f.end, null);
+  else if (!f.loc) addErr = "Choose where it was done."; else if (needsPlace(f.loc) && place.length < 2) addErr = "Say which field or place."; else if (task.length < 2) addErr = "Say what work was done."; else if (extraErr(f.extra)) addErr = extraErr(f.extra); else addErr = overlapMsg(f.uid, f.date, f.start, f.end, null);
   if (addErr) { if (document.activeElement) document.activeElement.blur(); render(); return; }
   btn.disabled = true;
-  const body = { uid: f.uid, date: f.date, start: f.start, end: f.end, hours: r2(m / 60), loc: f.loc, place, task, status: f.approve ? "approved" : "pending", createdAt: F.serverTimestamp(), addedBy: "owner" };
+  const body = { uid: f.uid, date: f.date, start: f.start, end: f.end, hours: r2(m / 60), loc: f.loc, place, task, extra: extraBody(f.extra), status: f.approve ? "approved" : "pending", createdAt: F.serverTimestamp(), addedBy: "owner" };
   if (f.approve) { body.approvedHours = r2(m / 60); body.approvedAt = F.serverTimestamp(); }
-  try { await F.addDoc(F.collection(db, "entries"), body); toast(f.approve ? "Entry added and approved" : "Entry added, waiting for approval"); const u = f.uid; addForm = { uid: u, date: "", start: "", end: "", loc: "", place: "", task: "", approve: true }; addOpen = false; if (document.activeElement) document.activeElement.blur(); render(); }
+  try { await F.addDoc(F.collection(db, "entries"), body); toast(f.approve ? "Entry added and approved" : "Entry added, waiting for approval"); const u = f.uid; addForm = { uid: u, date: "", start: "", end: "", loc: "", place: "", task: "", approve: true, extra: {} }; addOpen = false; if (document.activeElement) document.activeElement.blur(); render(); }
   catch (e) { addErr = errMsg(e); btn.disabled = false; render(); }
 }

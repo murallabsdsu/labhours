@@ -8,14 +8,15 @@ service cloud.firestore {
       return signedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.approved == true;
     }
     function okFields(d) {
-      return d.keys().hasOnly(['uid','date','start','end','hours','loc','place','task','output','status','createdAt','updatedAt','note','approvedHours','approvedAt','addedBy'])
+      return d.keys().hasOnly(['uid','date','start','end','hours','loc','place','task','output','status','createdAt','updatedAt','note','approvedHours','approvedAt','addedBy','extra'])
         && d.date is string && d.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
         && d.start is string && d.start.matches('^[0-2][0-9]:[0-5][0-9]$')
         && d.end is string && d.end.matches('^[0-2][0-9]:[0-5][0-9]$')
         && d.end > d.start
         && d.loc is string && d.loc.size() > 0 && d.loc.size() <= 40
         && d.place is string && d.place.size() <= 80
-        && d.task is string && d.task.size() >= 2 && d.task.size() <= 600;
+        && d.task is string && d.task.size() >= 2 && d.task.size() <= 600
+        && (!('extra' in d) || (d.extra is map && d.extra.size() <= 12));
     }
 
     match /admins/{id} {
@@ -53,6 +54,10 @@ service cloud.firestore {
         && okFields(request.resource.data));
       allow delete: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid
         && resource.data.status in ['pending', 'returned']);
+    }
+
+    match /adminNotes/{id} {
+      allow read, write: if isAdmin();
     }
 
     match /settings/{id} {
