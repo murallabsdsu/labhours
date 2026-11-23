@@ -1,4 +1,4 @@
-import * as F from "./fb.js?v=8";
+import * as F from "./fb.js?v=9";
 const { auth, db } = F;
 
 const DEF_LOCS = ["Lab", "Greenhouse", "Field", "Computer or office", "Other"];
@@ -26,7 +26,7 @@ let busy = false, editingId = null, selLoc = "", armed = null, armTimer = null;
 let fStudent = "all", fStatus = "all", returningId = null, returnNote = "", addOpen = false, addErr = "";
 let addForm = { uid: "", date: "", start: "", end: "", loc: "", place: "", task: "", approve: true, extra: {} };
 let authMode = "in", autoMade = false;
-const DEF_PROFILE = [{ key: "student_id", label: "Student ID" }, { key: "phone", label: "Phone" }, { key: "program", label: "Program / year" }, { key: "start_date", label: "Start date" }, { key: "weekly_cap", label: "Weekly hour limit" }];
+const DEF_PROFILE = [{ key: "student_id", label: "Student ID" }, { key: "phone", label: "Phone" }, { key: "program", label: "Program / year" }, { key: "start_date", label: "Start date" }];
 let fields = [], profileFields = DEF_PROFILE.slice(), notes = {}, editingProfile = null;
 const slug = (t) => (String(t).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 20) || "field") + "_" + Math.random().toString(36).slice(2, 5);
 function validField(f) { return f && /^[a-z0-9_]{1,30}$/.test(f.key || "") && typeof f.label === "string" && f.label.length >= 1 && f.label.length <= 40 && ["text", "select", "number"].includes(f.type); }
@@ -74,6 +74,8 @@ const nameOf = (uid) => (users[uid] && users[uid].name) || "";
 const rows = () => entries.map((e) => norm(e.id, e.data)).filter(Boolean);
 const apprH = (r) => (r.status === "approved" ? r.hours : 0);
 const pendH = (r) => (r.status === "approved" ? 0 : r.hours);
+const capOf = (uid) => (users[uid] && users[uid].cap) || 0;
+const weekHours = (uid, date, skipId) => r2(rows().filter((r) => r.uid === uid && r.id !== skipId && mondayOf(r.date) === mondayOf(date)).reduce((a, r) => a + r.hours, 0));
 const whereOf = (r) => ((r.loc || "") + (r.loc && r.place ? ": " : "") + (r.place || "")) || "Not given";
 const pill = (r) => r.status === "approved" ? '<span class="pill ok">Approved</span>' : r.status === "returned" ? '<span class="pill bad">Returned</span>' : '<span class="pill warn">Waiting for approval</span>';
 const byPill = (r) => (r.by === "owner" ? ' <span class="pill soft">Added by supervisor</span>' : "");
@@ -145,12 +147,12 @@ async function startSession(u) {
   $("so").onclick = () => F.signOut(auth);
   if (isAdmin) {
     view = "dash";
-    unsubs.push(F.onSnapshot(F.collection(db, "users"), (s) => { users = {}; s.docs.forEach((d) => { const x = d.data(); users[d.id] = { email: x.email || "", requested: x.requestedName || "", name: x.name || "", approved: x.approved === true, info: x.info && typeof x.info === "object" ? x.info : {} }; }); render(); }, onErr));
+    unsubs.push(F.onSnapshot(F.collection(db, "users"), (s) => { users = {}; s.docs.forEach((d) => { const x = d.data(); users[d.id] = { email: x.email || "", requested: x.requestedName || "", name: x.name || "", approved: x.approved === true, cap: Number(x.weeklyCap) > 0 ? Number(x.weeklyCap) : 0, info: x.info && typeof x.info === "object" ? x.info : {} }; }); render(); }, onErr));
     unsubs.push(F.onSnapshot(F.collection(db, "adminNotes"), (s) => { notes = {}; s.docs.forEach((d) => { notes[d.id] = String((d.data() || {}).text || ""); }); render(); }, () => {}));
     unsubs.push(F.onSnapshot(F.collection(db, "entries"), (s) => { entries = s.docs.map((d) => ({ id: d.id, data: d.data() })); render(); }, onErr));
   } else {
     unsubs.push(F.onSnapshot(F.doc(db, "users", u.uid), (s) => {
-      if (!s.exists()) { profile = { missing: true }; const dn = (u.displayName || "").trim(); if (NAME_RE.test(dn) && !autoMade) { autoMade = true; F.setDoc(F.doc(db, "users", u.uid), { email: u.email || "", requestedName: dn, approved: false, createdAt: F.serverTimestamp() }).catch(() => { autoMade = false; }); } } else { const x = s.data(); profile = { approved: x.approved === true, name: x.name || "", requested: x.requestedName || "" }; if (profile.approved) users[u.uid] = { name: profile.name, approved: true }; }
+      if (!s.exists()) { profile = { missing: true }; const dn = (u.displayName || "").trim(); if (NAME_RE.test(dn) && !autoMade) { autoMade = true; F.setDoc(F.doc(db, "users", u.uid), { email: u.email || "", requestedName: dn, approved: false, createdAt: F.serverTimestamp() }).catch(() => { autoMade = false; }); } } else { const x = s.data(); profile = { approved: x.approved === true, name: x.name || "", requested: x.requestedName || "", cap: Number(x.weeklyCap) > 0 ? Number(x.weeklyCap) : 0 }; if (profile.approved) users[u.uid] = { name: profile.name, approved: true, cap: profile.cap }; }
       render();
     }, onErr));
     unsubs.push(F.onSnapshot(F.query(F.collection(db, "entries"), F.where("uid", "==", u.uid)), (s) => { entries = s.docs.map((d) => ({ id: d.id, data: d.data() })); render(); }, onErr));
@@ -214,6 +216,11 @@ function overlapMsg(uid, date, start, end, skipId) {
   for (const l of rows()) if (l.uid === uid && l.id !== skipId && l.date === date && toMin(start) < toMin(l.end) && toMin(l.start) < toMin(end)) return "This overlaps an entry already logged (" + fmtT(l.start) + " to " + fmtT(l.end) + ").";
   return "";
 }
+function capMsg(uid, date, h, skipId) {
+  const cap = capOf(uid); if (!cap) return "";
+  const have = weekHours(uid, date, skipId);
+  return have + h > cap + 0.0001 ? "Your weekly limit is " + fh(cap) + " h. You already have " + fh(have) + " h logged for the week of " + shortDate(mondayOf(date)) + ", so this entry would go over it. Ask the lab supervisor if you need extra hours." : "";
+}
 async function submitStudent(ev) {
   ev.preventDefault(); if (busy) return; refreshToday();
   const v = { date: $("f-date").value, start: $("f-start").value, end: $("f-end").value, loc: selLoc, place: $("f-place").value.trim(), task: $("f-task").value.trim() };
@@ -231,7 +238,7 @@ async function submitStudent(ev) {
   else if (needsPlace(v.loc) && v.place.length < 2) err.textContent = "Say which field or place you worked in.";
   else if (v.task.length < 2) err.textContent = "Say what work you did.";
   else if (extraErr(readExtra("x-"))) err.textContent = extraErr(readExtra("x-"));
-  else err.textContent = overlapMsg(me.uid, v.date, v.start, v.end, editingId);
+  else err.textContent = overlapMsg(me.uid, v.date, v.start, v.end, editingId) || capMsg(me.uid, v.date, m / 60, editingId);
   if (err.textContent) return;
   busy = true; $("f-submit").disabled = true;
   const body = { uid: me.uid, date: v.date, start: v.start, end: v.end, hours: r2(m / 60), loc: v.loc, place: v.place, task: v.task, extra: extraBody(readExtra("x-")), status: "pending" };
@@ -247,7 +254,7 @@ function renderMineOnly() {
   const all = rows().filter((r) => r.uid === me.uid), wk = mondayOf(todayS), ym = todayS.slice(0, 7);
   let td = 0, w = 0, mo = 0, mA = 0; all.forEach((r) => { if (r.date === todayS) td += r.hours; if (mondayOf(r.date) === wk) w += r.hours; if (r.date.slice(0, 7) === ym) { mo += r.hours; mA += apprH(r); } });
   const list = all.sort((a, b) => (b.date + b.start).localeCompare(a.date + a.start)).slice(0, 25);
-  let h = `<div class="mhead"><h2>${esc(profile.name)}’s entries</h2><div class="stats"><span>Today <b class="mono">${fh(td)} h</b></span><span>This week <b class="mono">${fh(w)} h</b></span><span>${MON[+ym.slice(5) - 1]} <b class="mono">${fh(mo)} h</b> logged, <b class="mono">${fh(mA)} h</b> approved</span></div></div>`;
+  let h = `<div class="mhead"><h2>${esc(profile.name)}’s entries</h2><div class="stats"><span>Today <b class="mono">${fh(td)} h</b></span><span>This week <b class="mono">${fh(w)} h</b>${capOf(me.uid) ? ` of ${fh(capOf(me.uid))} h limit` : ""}</span><span>${MON[+ym.slice(5) - 1]} <b class="mono">${fh(mo)} h</b> logged, <b class="mono">${fh(mA)} h</b> approved</span></div></div>`;
   if (!list.length) h += '<p class="empty">No entries yet. Add your first one on the left.</p>';
   else { let cur = ""; const tot = {}; list.forEach((r) => (tot[r.date] = (tot[r.date] || 0) + r.hours));
     list.forEach((r) => { if (r.date !== cur) { if (cur) h += "</div>"; cur = r.date; h += `<div class="day"><div class="dayhead"><span>${esc(longDate(r.date))}</span><span class="mono">${fh(tot[r.date])} h</span></div>`; }
@@ -273,6 +280,7 @@ function renderAccounts() {
   const prof = (u) => `<div class="card" style="margin:8px 0 12px;background:var(--bg)"><h3 style="margin:0 0 10px">Edit profile</h3>
     <div class="row2"><label>Name<input id="pf-name" maxlength="40" value="${esc(users[u].name)}"></label><label>Email (from login)<input value="${esc(users[u].email)}" disabled></label></div>
     <div class="row2" style="margin-top:10px">${profileFields.map((f) => `<label>${esc(f.label)}<input id="pf-${esc(f.key)}" maxlength="120" value="${esc((users[u].info || {})[f.key] || "")}"></label>`).join("")}</div>
+    <label style="margin-top:10px">Weekly hour limit (Monday to Sunday; leave empty or 0 for no limit)<input id="pf-cap" type="number" min="0" max="168" step="0.5" value="${users[u].cap || ""}"></label>
     <label style="margin-top:10px">Private notes (only you see these)<textarea id="pf-notes" maxlength="1000">${esc(notes[u] || "")}</textarea></label>
     <div class="btnrow" style="margin-top:10px"><button class="btn primary" data-save-profile="${esc(u)}">Save profile</button><button class="btn" data-close-profile>Cancel</button></div></div>`;
   let h = `<div class="card"><h3>Waiting for approval</h3>${pend.length ? pend.map((u) => `<div class="srow"><span><b>${esc(users[u].requested || "(no name)")}</b> <span class="muted">${esc(users[u].email)}</span></span><span class="ctrl"><input data-nm="${esc(u)}" value="${esc(users[u].requested)}" maxlength="40" aria-label="Name to use"><button class="btn sm" data-approve-user="${esc(u)}">Approve</button></span></div>`).join("") : '<p class="empty">No one is waiting.</p>'}
@@ -288,9 +296,11 @@ function renderAccounts() {
       if (sp) { const u = sp.dataset.saveProfile, nm = $("pf-name").value.trim().replace(/\s+/g, " ");
         if (!NAME_RE.test(nm)) { toast("Use letters only for the name."); return; }
         if (approvedStudents().some((x) => x !== u && nameOf(x).toLowerCase() === nm.toLowerCase())) { toast("That name is already used. Add a last initial."); return; }
+        const capRaw = $("pf-cap").value.trim(), cap = capRaw === "" ? 0 : Number(capRaw);
+        if (!Number.isFinite(cap) || cap < 0 || cap > 168) { toast("Weekly limit must be a number from 0 to 168."); return; }
         const info = {}; profileFields.forEach((f) => { const v = $("pf-" + f.key).value.trim(); if (v) info[f.key] = v.slice(0, 120); });
         const noteText = $("pf-notes").value.slice(0, 1000); sp.disabled = true; editingProfile = null;
-        await F.setDoc(F.doc(db, "adminNotes", u), { text: noteText }); await F.updateDoc(F.doc(db, "users", u), { name: nm, info }); toast("Profile saved"); render(); return; }
+        await F.setDoc(F.doc(db, "adminNotes", u), { text: noteText }); await F.updateDoc(F.doc(db, "users", u), { name: nm, info, weeklyCap: cap }); toast("Profile saved"); render(); return; }
       if (a) { const u = a.dataset.approveUser, inp = $("main").querySelector(`[data-nm="${u}"]`), nm = inp.value.trim().replace(/\s+/g, " ");
         if (!NAME_RE.test(nm)) { toast("Use letters only for the name."); return; }
         if (approvedStudents().some((x) => nameOf(x).toLowerCase() === nm.toLowerCase())) { toast("That name is already used. Add a last initial."); return; }
@@ -372,7 +382,7 @@ function renderDash() {
   const pend = {}; all.forEach((r) => { if (r.status === "pending") { const o = pend[r.uid] || (pend[r.uid] = { n: 0, h: 0 }); o.n++; o.h += r.hours; } });
   let totA = 0, totP = 0; studs.forEach((u) => { totA += A[u].appr; totP += A[u].pend; });
   h += `<div class="tiles">${studs.map((u) => { const last = A[u].last || all.filter((r) => r.uid === u).map((r) => r.date).sort().pop() || ""; const ago = last ? dayDiff(todayS, last) : null;
-    return `<div class="tile" style="--c:${CV(u)}"><div class="who2"><i class="dot"></i>${esc(nameOf(u))}</div><div class="big">${fh(A[u].appr)}<small>h approved</small></div><div class="sub">${A[u].pend > 0 ? `<span class="pill warn">${fh(A[u].pend)} h waiting</span>` : "<span>Nothing waiting</span>"}<span>${A[u].n} entries</span></div><div class="sub">${last ? "Last log " + esc(shortDate(last)) + (ago === 0 ? " (today)" : " (" + ago + " d ago)") : "No entries yet"}${ago !== null && ago >= 3 ? ` <span class="pill warn">No log for ${ago} days</span>` : ""}</div>${pend[u] ? `<button class="btn sm" data-act="approve-student" data-uid="${esc(u)}">Approve all waiting (${pend[u].n} entries, ${fh(pend[u].h)} h)</button>` : ""}</div>`; }).join("")}
+    return `<div class="tile" style="--c:${CV(u)}"><div class="who2"><i class="dot"></i>${esc(nameOf(u))}</div><div class="big">${fh(A[u].appr)}<small>h approved</small></div><div class="sub">${A[u].pend > 0 ? `<span class="pill warn">${fh(A[u].pend)} h waiting</span>` : "<span>Nothing waiting</span>"}<span>${A[u].n} entries</span>${capOf(u) ? `<span>Limit ${fh(capOf(u))} h/week</span>` : ""}</div><div class="sub">${last ? "Last log " + esc(shortDate(last)) + (ago === 0 ? " (today)" : " (" + ago + " d ago)") : "No entries yet"}${ago !== null && ago >= 3 ? ` <span class="pill warn">No log for ${ago} days</span>` : ""}</div>${pend[u] ? `<button class="btn sm" data-act="approve-student" data-uid="${esc(u)}">Approve all waiting (${pend[u].n} entries, ${fh(pend[u].h)} h)</button>` : ""}</div>`; }).join("")}
    <div class="tile total"><div class="who2">All students</div><div class="big">${fh(totA)}<small>h approved</small></div><div class="sub"><span>${fh(totP)} h waiting</span></div></div></div>`;
   /* year table */
   const yr = month.slice(0, 4), curM = +month.slice(5) - 1, Y = {}; studs.forEach((u) => (Y[u] = Array(12).fill(0)));
@@ -382,6 +392,7 @@ function renderDash() {
    ${studs.map((u) => { let t = 0; return `<tr><td><i class="dot" style="--c:${CV(u)}"></i> ${esc(nameOf(u))}</td>${Y[u].map((v, i) => { t += v; colT[i] += v; return `<td class="mono ${i === curM ? "cur" : ""}">${v ? fh(v) : ""}</td>`; }).join("")}<td class="mono"><b>${fh(t)}</b></td></tr>`; }).join("")}
    </tbody><tfoot><tr><td>All students</td>${colT.map((v, i) => `<td class="mono ${i === curM ? "cur" : ""}">${v ? fh(v) : ""}</td>`).join("")}<td class="mono">${fh(colT.reduce((a, b) => a + b, 0))}</td></tr></tfoot></table></div></div>`;
   /* entries */
+  const wkTot = {}; mrows.forEach((r) => { const k = r.uid + "|" + mondayOf(r.date); wkTot[k] = (wkTot[k] || 0) + r.hours; });
   const dayTot = {}; mrows.forEach((r) => { const k = r.uid + "|" + r.date; dayTot[k] = (dayTot[k] || 0) + r.hours; });
   const fr = mrows.filter((r) => (fStudent === "all" || r.uid === fStudent) && (fStatus === "all" || r.status === fStatus)).sort((a, b) => (b.date + b.start).localeCompare(a.date + a.start));
   const todo = fr.filter((r) => r.status === "pending").length;
@@ -390,7 +401,7 @@ function renderDash() {
   h += fr.length ? `<div class="scroll"><table><thead><tr><th>Date</th><th>Student</th><th>Time</th><th class="n">Hours</th><th>Where</th><th>Work done</th><th>Status</th><th></th></tr></thead><tbody>${fr.map((r) => {
     const del = `<button class="btn sm danger" data-act="delete" data-id="${esc(r.id)}">Delete</button>`;
     const act = r.status === "approved" ? `<div class="ctrl"><button class="btn sm" data-act="unapprove" data-id="${esc(r.id)}">Undo</button>${del}</div>` : `<div class="ctrl"><button class="btn sm" data-act="approve" data-id="${esc(r.id)}">Approve</button>${r.status === "returned" ? "" : `<button class="btn sm" data-act="return" data-id="${esc(r.id)}">Return</button>`}${del}</div>`;
-    let row = `<tr><td class="mono" style="white-space:nowrap">${esc(shortDate(r.date))}${dayTot[r.uid + "|" + r.date] > 10 ? ` <span class="pill warn">${fh(dayTot[r.uid + "|" + r.date])} h that day</span>` : ""}</td><td style="white-space:nowrap"><i class="dot" style="--c:${CV(r.uid)}"></i> ${esc(nameOf(r.uid))}</td><td class="mono muted" style="white-space:nowrap">${esc(fmtT(r.start))} to ${esc(fmtT(r.end))}</td><td class="n mono">${fh(r.hours)}</td><td class="what">${esc(whereOf(r))}</td><td class="what">${esc(r.task)}${extraLine(r) ? `<div class="muted" style="font-size:12.5px">${extraLine(r)}</div>` : ""}</td><td>${pill(r)}${byPill(r)}${r.note && r.status === "returned" ? `<div class="muted" style="font-size:12px;max-width:180px;overflow-wrap:anywhere">${esc(r.note)}</div>` : ""}</td><td>${act}</td></tr>`;
+    let row = `<tr><td class="mono" style="white-space:nowrap">${esc(shortDate(r.date))}${capOf(r.uid) && wkTot[r.uid + "|" + mondayOf(r.date)] > capOf(r.uid) + 0.0001 ? ` <span class="pill bad">Over ${fh(capOf(r.uid))} h weekly limit</span>` : ""}${dayTot[r.uid + "|" + r.date] > 10 ? ` <span class="pill warn">${fh(dayTot[r.uid + "|" + r.date])} h that day</span>` : ""}</td><td style="white-space:nowrap"><i class="dot" style="--c:${CV(r.uid)}"></i> ${esc(nameOf(r.uid))}</td><td class="mono muted" style="white-space:nowrap">${esc(fmtT(r.start))} to ${esc(fmtT(r.end))}</td><td class="n mono">${fh(r.hours)}</td><td class="what">${esc(whereOf(r))}</td><td class="what">${esc(r.task)}${extraLine(r) ? `<div class="muted" style="font-size:12.5px">${extraLine(r)}</div>` : ""}</td><td>${pill(r)}${byPill(r)}${r.note && r.status === "returned" ? `<div class="muted" style="font-size:12px;max-width:180px;overflow-wrap:anywhere">${esc(r.note)}</div>` : ""}</td><td>${act}</td></tr>`;
     if (returningId === r.id) row += `<tr class="sub"><td colspan="8"><div class="retin"><input id="ret-note" maxlength="300" value="${esc(returnNote)}" placeholder="What should the student fix?"><button class="btn sm" data-act="return-send" data-id="${esc(r.id)}">Send back</button><button class="btn sm" data-act="return-cancel">Cancel</button></div></td></tr>`;
     return row; }).join("")}</tbody></table></div>` : '<p class="empty">No entries match. Change the month or the filters above.</p>';
   h += `<p class="tfoot-note">Only approved hours count. Approved entries are locked: students cannot edit or delete them. Hours are always calculated from start and end times.</p></div>`;
