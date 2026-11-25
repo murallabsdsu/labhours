@@ -1,4 +1,4 @@
-import * as F from "./fb.js?v=13";
+import * as F from "./fb.js?v=14";
 const { auth, db } = F;
 
 const DEF_LOCS = ["Lab", "Greenhouse", "Field", "Computer or office", "Other"];
