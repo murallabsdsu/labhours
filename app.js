@@ -1,4 +1,4 @@
-import * as F from "./fb.js?v=11";
+import * as F from "./fb.js?v=12";
 const { auth, db } = F;
 
 const DEF_LOCS = ["Lab", "Greenhouse", "Field", "Computer or office", "Other"];
@@ -156,12 +156,12 @@ async function startSession(u) {
   $("so").onclick = () => F.signOut(auth);
   if (isAdmin) {
     view = "dash";
-    unsubs.push(F.onSnapshot(F.collection(db, "users"), (s) => { users = {}; s.docs.forEach((d) => { const x = d.data(); users[d.id] = { email: x.email || "", requested: x.requestedName || "", name: x.name || "", approved: x.approved === true, cap: Number(x.weeklyCap) > 0 ? Number(x.weeklyCap) : 0, info: x.info && typeof x.info === "object" ? x.info : {} }; }); render(); }, onErr));
+    unsubs.push(F.onSnapshot(F.collection(db, "users"), (s) => { users = {}; s.docs.forEach((d) => { const x = d.data(); users[d.id] = { email: x.email || "", requested: x.requestedName || "", name: x.name || "", approved: x.approved === true, denied: x.denied === true, cap: Number(x.weeklyCap) > 0 ? Number(x.weeklyCap) : 0, info: x.info && typeof x.info === "object" ? x.info : {} }; }); render(); }, onErr));
     unsubs.push(F.onSnapshot(F.collection(db, "adminNotes"), (s) => { notes = {}; s.docs.forEach((d) => { notes[d.id] = String((d.data() || {}).text || ""); }); render(); }, () => {}));
     unsubs.push(F.onSnapshot(F.collection(db, "entries"), (s) => { entries = s.docs.map((d) => ({ id: d.id, data: d.data() })); render(); }, onErr));
   } else {
     unsubs.push(F.onSnapshot(F.doc(db, "users", u.uid), (s) => {
-      if (!s.exists()) { profile = { missing: true }; const dn = (u.displayName || "").trim(); if (NAME_RE.test(dn) && !autoMade) { autoMade = true; F.setDoc(F.doc(db, "users", u.uid), { email: u.email || "", requestedName: dn, approved: false, createdAt: F.serverTimestamp() }).catch(() => { autoMade = false; }); } } else { const x = s.data(); profile = { approved: x.approved === true, name: x.name || "", requested: x.requestedName || "", cap: Number(x.weeklyCap) > 0 ? Number(x.weeklyCap) : 0 }; if (profile.approved) users[u.uid] = { name: profile.name, approved: true, cap: profile.cap }; }
+      if (!s.exists()) { profile = { missing: true }; const dn = (u.displayName || "").trim(); if (NAME_RE.test(dn) && !autoMade) { autoMade = true; F.setDoc(F.doc(db, "users", u.uid), { email: u.email || "", requestedName: dn, approved: false, createdAt: F.serverTimestamp() }).catch(() => { autoMade = false; }); } } else { const x = s.data(); profile = { approved: x.approved === true, name: x.name || "", requested: x.requestedName || "", denied: x.denied === true && x.approved !== true, cap: Number(x.weeklyCap) > 0 ? Number(x.weeklyCap) : 0 }; if (profile.approved) users[u.uid] = { name: profile.name, approved: true, cap: profile.cap }; }
       render();
     }, onErr));
     unsubs.push(F.onSnapshot(F.query(F.collection(db, "entries"), F.where("uid", "==", u.uid)), (s) => { entries = s.docs.map((d) => ({ id: d.id, data: d.data() })); render(); }, onErr));
@@ -183,6 +183,7 @@ function render() {
     tabs.hidden = true;
     if (!profile) return;
     if (profile.missing) { renderMissing(); return; }
+    if (!profile.approved && profile.denied) { $("main").innerHTML = `<div class="card narrow"><h2>Request not approved</h2><p class="muted">The lab supervisor did not approve the account ${esc(me.email)}. Please contact the supervisor directly.</p></div>`; return; }
     if (!profile.approved) { $("main").innerHTML = `<div class="card narrow"><h2>Waiting for the supervisor</h2><p class="muted">Your account (${esc(me.email)}) was created. When the lab supervisor approves it, this page will show your log form. You can close this page and come back later.</p></div>`; return; }
     const ae = document.activeElement; if (ae && ae.closest && ae.closest("#log-wrap") && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) { renderMineOnly(); return; }
     renderStudent();
@@ -286,7 +287,8 @@ function renderMineOnly() {
 function mondayOf(s) { const d = parseD(s); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return fmtDate(d); }
 
 /* ---------- admin ---------- */
-const pendingUsers = () => Object.keys(users).filter((u) => !users[u].approved);
+const pendingUsers = () => Object.keys(users).filter((u) => !users[u].approved && !users[u].denied);
+const declinedUsers = () => Object.keys(users).filter((u) => !users[u].approved && users[u].denied);
 function renderAccounts() {
   const pend = pendingUsers(), appr = Object.keys(users).filter((u) => users[u].approved).sort((x, y) => nameOf(x).localeCompare(nameOf(y)));
   const prof = (u) => `<div class="card" style="margin:8px 0 12px;background:var(--bg)"><h3 style="margin:0 0 10px">Edit profile</h3>
@@ -295,13 +297,14 @@ function renderAccounts() {
     <label style="margin-top:10px">Weekly hour limit (Monday to Sunday; leave empty or 0 for no limit)<input id="pf-cap" type="number" min="0" max="168" step="0.5" value="${users[u].cap || ""}"></label>
     <label style="margin-top:10px">Private notes (only you see these)<textarea id="pf-notes" maxlength="1000">${esc(notes[u] || "")}</textarea></label>
     <div class="btnrow" style="margin-top:10px"><button class="btn primary" data-save-profile="${esc(u)}">Save profile</button><button class="btn" data-close-profile>Cancel</button></div></div>`;
-  let h = `<div class="card"><h3>Waiting for approval</h3>${pend.length ? pend.map((u) => `<div class="srow"><span><b>${esc(users[u].requested || "(no name)")}</b> <span class="muted">${esc(users[u].email)}</span></span><span class="ctrl"><input data-nm="${esc(u)}" value="${esc(users[u].requested)}" maxlength="40" aria-label="Name to use"><button class="btn sm" data-approve-user="${esc(u)}">Approve</button></span></div>`).join("") : '<p class="empty">No one is waiting.</p>'}
-  <p class="tfoot-note">Check the email before you approve. The name you type here is the name used for all of that student's hours.</p></div>
+  let h = `<div class="card"><h3>Waiting for approval</h3>${pend.length ? pend.map((u) => `<div class="srow"><span><b>${esc(users[u].requested || "(no name)")}</b> <span class="muted">${esc(users[u].email)}</span></span><span class="ctrl"><input data-nm="${esc(u)}" value="${esc(users[u].requested)}" maxlength="40" aria-label="Name to use"><button class="btn sm" data-approve-user="${esc(u)}">Approve</button><button class="btn sm" data-decline="${esc(u)}">Decline</button><button class="btn sm danger" data-erase="${esc(u)}">Erase</button></span></div>`).join("") : '<p class="empty">No one is waiting.</p>'}
+  <p class="tfoot-note">Check the email before you approve. The name you type here is the name used for all of that student's hours. <b>Decline</b> keeps the request on file as declined, so the same person can't ask again. <b>Erase</b> deletes the request completely, and if they sign in again they can ask again.</p></div>
+  ${declinedUsers().length ? `<div class="card"><h3>Declined requests</h3>${declinedUsers().map((u) => `<div class="srow"><span><b>${esc(users[u].requested || "(no name)")}</b> <span class="muted">${esc(users[u].email)}</span></span><span class="ctrl"><input data-nm="${esc(u)}" value="${esc(users[u].requested)}" maxlength="40" aria-label="Name to use"><button class="btn sm" data-approve-user="${esc(u)}">Approve</button><button class="btn sm danger" data-erase="${esc(u)}">Erase</button></span></div>`).join("")}</div>` : ""}
   <div class="card"><h3>Students</h3>${appr.length ? appr.map((u) => `<div class="srow"><span><b>${esc(users[u].name)}</b> <span class="muted">${esc(users[u].email)}</span></span><span class="ctrl"><button class="btn sm" data-edit-profile="${esc(u)}">${editingProfile === u ? "Close" : "Edit profile"}</button><button class="btn sm danger" data-revoke="${esc(u)}">Remove access</button></span></div>${editingProfile === u ? prof(u) : ""}`).join("") : '<p class="empty">None yet.</p>'}
   <p class="tfoot-note">Removing access stops the student from logging more hours. Their past entries stay. Profile fields can be changed in Settings.</p></div>`;
   $("main").innerHTML = h;
   $("main").onclick = async (ev) => {
-    const a = ev.target.closest("[data-approve-user]"), r = ev.target.closest("[data-revoke]"), ep = ev.target.closest("[data-edit-profile]"), sp = ev.target.closest("[data-save-profile]");
+    const dc = ev.target.closest("[data-decline]"), er = ev.target.closest("[data-erase]"), a = ev.target.closest("[data-approve-user]"), r = ev.target.closest("[data-revoke]"), ep = ev.target.closest("[data-edit-profile]"), sp = ev.target.closest("[data-save-profile]");
     try {
       if (ep) { editingProfile = editingProfile === ep.dataset.editProfile ? null : ep.dataset.editProfile; render(); return; }
       if (ev.target.closest("[data-close-profile]")) { editingProfile = null; render(); return; }
@@ -313,10 +316,13 @@ function renderAccounts() {
         const info = {}; profileFields.forEach((f) => { const v = $("pf-" + f.key).value.trim(); if (v) info[f.key] = v.slice(0, 120); });
         const noteText = $("pf-notes").value.slice(0, 1000); sp.disabled = true; editingProfile = null;
         await F.setDoc(F.doc(db, "adminNotes", u), { text: noteText }); await F.updateDoc(F.doc(db, "users", u), { name: nm, info, weeklyCap: cap }); toast("Profile saved"); render(); return; }
+      if (dc) { await F.updateDoc(F.doc(db, "users", dc.dataset.decline), { approved: false, denied: true }); toast("Request declined"); return; }
+      if (er) { const u = er.dataset.erase; if (armed !== "eu" + u) { armed = "eu" + u; clearTimeout(armTimer); armTimer = setTimeout(() => { armed = null; renderAccounts(); }, 4000); er.textContent = "Tap again to erase"; return; }
+        armed = null; await F.deleteDoc(F.doc(db, "users", u)); try { await F.deleteDoc(F.doc(db, "adminNotes", u)); } catch (e) {} toast("Request erased"); return; }
       if (a) { const u = a.dataset.approveUser, inp = $("main").querySelector(`[data-nm="${u}"]`), nm = inp.value.trim().replace(/\s+/g, " ");
         if (!NAME_RE.test(nm)) { toast("Use letters only for the name."); return; }
         if (approvedStudents().some((x) => nameOf(x).toLowerCase() === nm.toLowerCase())) { toast("That name is already used. Add a last initial."); return; }
-        await F.updateDoc(F.doc(db, "users", u), { approved: true, name: nm }); toast("Approved"); }
+        await F.updateDoc(F.doc(db, "users", u), { approved: true, denied: false, name: nm }); toast("Approved"); }
       else if (r) { await F.updateDoc(F.doc(db, "users", r.dataset.revoke), { approved: false }); toast("Access removed"); }
     } catch (e) { toast(errMsg(e)); }
   };
