@@ -1,4 +1,4 @@
-# Lab Hours Log
+# Mural Lab Hours Log
 
 A small website where lab student workers log daily hours (date, start, end, where, work done, output). Hours are calculated from the times. Each student sees only their own entries. The supervisor sees everyone, approves or returns entries, adds entries, and downloads CSV backups. Approved entries are locked.
 
