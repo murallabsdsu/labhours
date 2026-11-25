@@ -1,4 +1,4 @@
-import * as F from "./fb.js?v=9";
+import * as F from "./fb.js?v=10";
 const { auth, db } = F;
 
 const DEF_LOCS = ["Lab", "Greenhouse", "Field", "Computer or office", "Other"];
@@ -27,15 +27,19 @@ let fStudent = "all", fStatus = "all", returningId = null, returnNote = "", addO
 let addForm = { uid: "", date: "", start: "", end: "", loc: "", place: "", task: "", approve: true, extra: {} };
 let authMode = "in", autoMade = false;
 const DEF_PROFILE = [{ key: "student_id", label: "Student ID" }, { key: "phone", label: "Phone" }, { key: "program", label: "Program / year" }, { key: "start_date", label: "Start date" }];
+const CORE_DEF = { date: { label: "Date worked" }, start: { label: "Start" }, end: { label: "End" }, loc: { label: "Where did you work?" }, place: { label: "Which room, field or plot?", hint: "Example: Greenhouse 2 bench A, Field 3 rows 1 to 40, Lab room 214.", req: "auto" }, task: { label: "What work did you do?", hint: "" } };
+const cloneCore = () => JSON.parse(JSON.stringify(CORE_DEF));
+let core = cloneCore();
 let fields = [], profileFields = DEF_PROFILE.slice(), notes = {}, editingProfile = null;
 const slug = (t) => (String(t).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 20) || "field") + "_" + Math.random().toString(36).slice(2, 5);
 function validField(f) { return f && /^[a-z0-9_]{1,30}$/.test(f.key || "") && typeof f.label === "string" && f.label.length >= 1 && f.label.length <= 40 && ["text", "select", "number"].includes(f.type); }
-const cleanField = (f) => ({ key: f.key, label: f.label.slice(0, 40), type: f.type, required: f.required === true, options: Array.isArray(f.options) ? f.options.filter((o) => typeof o === "string" && o.length && o.length <= 40).slice(0, 20) : [] });
+const cleanField = (f) => ({ key: f.key, label: f.label.slice(0, 40), type: f.type, required: f.required === true, hint: typeof f.hint === "string" ? f.hint.slice(0, 150) : "", options: Array.isArray(f.options) ? f.options.filter((o) => typeof o === "string" && o.length && o.length <= 40).slice(0, 20) : [] });
 const extraBody = (obj) => { const o = {}; Object.keys(obj || {}).forEach((k) => { const v = String(obj[k] == null ? "" : obj[k]).trim(); if (v) o[k] = v.slice(0, 200); }); return o; };
 function fieldHtml(f, pre, vals) {
   const id = pre + f.key, v = (vals && vals[f.key]) || "";
-  if (f.type === "select") return `<label>${esc(f.label)}<select id="${esc(id)}"><option value="">Choose…</option>${f.options.map((o) => `<option${o === v ? " selected" : ""}>${esc(o)}</option>`).join("")}</select></label>`;
-  return `<label>${esc(f.label)}<input id="${esc(id)}" type="${f.type === "number" ? "number" : "text"}" ${f.type === "number" ? 'step="any"' : ""} maxlength="200" value="${esc(v)}"></label>`;
+  const hn = f.hint ? `<small>${esc(f.hint)}</small>` : "";
+  if (f.type === "select") return `<label>${esc(f.label)}${hn}<select id="${esc(id)}"><option value="">Choose…</option>${f.options.map((o) => `<option${o === v ? " selected" : ""}>${esc(o)}</option>`).join("")}</select></label>`;
+  return `<label>${esc(f.label)}${hn}<input id="${esc(id)}" type="${f.type === "number" ? "number" : "text"}" ${f.type === "number" ? 'step="any"' : ""} maxlength="200" value="${esc(v)}"></label>`;
 }
 function readExtra(pre) { const o = {}; fields.forEach((f) => { const el = $(pre + f.key); if (el) o[f.key] = el.value; }); return o; }
 function extraErr(vals) { for (const f of fields) { const v = String((vals && vals[f.key]) || "").trim(); if (f.required && !v) return `Fill in "${f.label}".`; if (v && f.type === "number" && !isFinite(Number(v))) return `"${f.label}" must be a number.`; } return ""; }
@@ -138,6 +142,11 @@ async function startSession(u) {
   unsubs.push(F.onSnapshot(F.doc(db, "settings", "main"), (s) => {
     const d = s.exists() ? s.data() : null;
     if (d && Array.isArray(d.locations)) { const l = d.locations.filter((x) => typeof x === "string" && x.length >= 2 && x.length <= 40).slice(0, 12); if (l.length) locations = l; }
+    core = cloneCore();
+    if (d && d.core && typeof d.core === "object") Object.keys(CORE_DEF).forEach((k) => { const c = d.core[k]; if (!c || typeof c !== "object") return;
+      if (typeof c.label === "string" && c.label.trim().length >= 1 && c.label.length <= 60) core[k].label = c.label;
+      if (typeof c.hint === "string" && c.hint.length <= 150 && "hint" in CORE_DEF[k]) core[k].hint = c.hint;
+      if (k === "place" && ["auto", "always", "never"].includes(c.req)) core.place.req = c.req; });
     if (d && Array.isArray(d.fields)) fields = d.fields.filter(validField).slice(0, 10).map(cleanField);
     if (d && Array.isArray(d.profileFields)) profileFields = d.profileFields.filter((f) => f && /^[a-z0-9_]{1,30}$/.test(f.key || "") && typeof f.label === "string" && f.label.length <= 40).slice(0, 12);
     render();
@@ -189,12 +198,12 @@ function renderMissing() {
 function renderStudent() {
   $("main").innerHTML = `<div class="log-grid" id="log-wrap"><form id="f" class="card" novalidate>
     <h2 id="f-title">${editingId ? "Edit entry" : "Add your work"}</h2>
-    <div class="row2"><label>Your name<input value="${esc(profile.name)}" disabled></label><label>Date worked<input id="f-date" type="date" max="${todayS}" value="${todayS}"></label></div>
-    <div class="row3"><label>Start<input id="f-start" type="time"></label><label>End<input id="f-end" type="time"></label><div class="lab"><small>Hours</small><div class="hours-out" id="f-hours">0 h</div></div></div>
-    <div class="lab" role="radiogroup"><span>Where did you work?</span><div class="chips" id="f-loc"></div></div>
-    <label>Which room, field or plot?<small>Example: Greenhouse 2 bench A, Field 3 rows 1 to 40, Lab room 214.</small><input id="f-place" maxlength="80" autocomplete="off"></label>
+    <div class="row2"><label>Your name<input value="${esc(profile.name)}" disabled></label><label>${esc(core.date.label)}<input id="f-date" type="date" max="${todayS}" value="${todayS}"></label></div>
+    <div class="row3"><label>${esc(core.start.label)}<input id="f-start" type="time"></label><label>${esc(core.end.label)}<input id="f-end" type="time"></label><div class="lab"><small>Hours</small><div class="hours-out" id="f-hours">0 h</div></div></div>
+    <div class="lab" role="radiogroup"><span>${esc(core.loc.label)}</span><div class="chips" id="f-loc"></div></div>
+    <label>${esc(core.place.label)}${core.place.hint ? `<small>${esc(core.place.hint)}</small>` : ""}<input id="f-place" maxlength="80" autocomplete="off"></label>
     ${fields.map((f) => fieldHtml(f, "x-", null)).join("")}
-    <label>What work did you do?<textarea id="f-task" maxlength="600"></textarea></label>
+    <label>${esc(core.task.label)}${core.task.hint ? `<small>${esc(core.task.hint)}</small>` : ""}<textarea id="f-task" maxlength="600"></textarea></label>
     <div class="err" id="f-err" role="alert"></div>
     <div class="btnrow"><button class="btn primary" id="f-submit" type="submit">${editingId ? "Save changes" : "Save entry"}</button><button class="btn" id="f-cancel" type="button" ${editingId ? "" : "hidden"}>Cancel</button></div></form>
     <div class="card" id="mine"></div></div>`;
@@ -209,9 +218,9 @@ function renderStudent() {
 function fillLocs() {
   const box = $("f-loc"); if (!box) return; if (!locations.includes(selLoc) && selLoc) locations = locations.concat([selLoc]);
   box.innerHTML = locations.map((l) => `<button type="button" class="chip" role="radio" aria-checked="${l === selLoc}" data-loc="${esc(l)}">${esc(l)}</button>`).join("");
-  const p = $("f-place"); if (p) p.placeholder = /field|other/i.test(selLoc) ? "Required for this place" : "Optional";
+  const p = $("f-place"); if (p) p.placeholder = needsPlace(selLoc) ? "Required" : "Optional";
 }
-const needsPlace = (l) => /field|other/i.test(l);
+const needsPlace = (l) => core.place.req === "always" || (core.place.req === "auto" && /field|other/i.test(l));
 function overlapMsg(uid, date, start, end, skipId) {
   for (const l of rows()) if (l.uid === uid && l.id !== skipId && l.date === date && toMin(start) < toMin(l.end) && toMin(l.start) < toMin(end)) return "This overlaps an entry already logged (" + fmtT(l.start) + " to " + fmtT(l.end) + ").";
   return "";
@@ -309,22 +318,31 @@ function renderAccounts() {
     } catch (e) { toast(errMsg(e)); }
   };
 }
-const saveSettings = (patch) => F.setDoc(F.doc(db, "settings", "main"), Object.assign({ locations, fields, profileFields }, patch));
+const saveSettings = (patch) => F.setDoc(F.doc(db, "settings", "main"), Object.assign({ locations, fields, profileFields, core }, patch));
 function renderSettings() {
-  const fieldRow = (f) => `<div class="srow" style="align-items:flex-end"><span class="ctrl" style="flex:1"><label style="flex:1;min-width:160px">Label<input id="fl-${esc(f.key)}" maxlength="40" value="${esc(f.label)}"></label>
-     ${f.type === "select" ? `<label style="flex:1;min-width:160px">Choices (comma separated)<input id="fo-${esc(f.key)}" value="${esc(f.options.join(", "))}"></label>` : `<span class="pill soft">${f.type === "number" ? "Number" : "Text"}</span>`}
+  const fieldRow = (f, i) => `<div class="srow" style="align-items:flex-end"><span class="ctrl" style="flex:1"><label style="flex:1;min-width:160px">Label<input id="fl-${esc(f.key)}" maxlength="40" value="${esc(f.label)}"></label>
+     <label style="flex:1;min-width:160px">Help text (optional)<input id="fh-${esc(f.key)}" maxlength="150" value="${esc(f.hint || "")}"></label>
+     <label>Type<select id="ft-${esc(f.key)}"><option value="text"${f.type === "text" ? " selected" : ""}>Text</option><option value="select"${f.type === "select" ? " selected" : ""}>Pick from a list</option><option value="number"${f.type === "number" ? " selected" : ""}>Number</option></select></label>
+     <label style="flex:1;min-width:160px">Choices (for a list, comma separated)<input id="fo-${esc(f.key)}" value="${esc((f.options || []).join(", "))}"></label>
      <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="fr-${esc(f.key)}"${f.required ? " checked" : ""}> Required</label></span>
-     <span class="ctrl"><button class="btn sm" data-set="save-field" data-key="${esc(f.key)}">Save</button><button class="btn sm danger" data-set="rm-field" data-key="${esc(f.key)}">Remove</button></span></div>`;
-  $("main").innerHTML = `<div class="card"><h3>Places to choose from</h3>${locations.map((l) => `<div class="srow"><span>${esc(l)}</span><button class="btn sm danger" data-rm="${esc(l)}">Remove</button></div>`).join("")}
+     <span class="ctrl">${mv("field", i, fields.length)}<button class="btn sm" data-set="save-field" data-key="${esc(f.key)}">Save</button><button class="btn sm danger" data-set="rm-field" data-key="${esc(f.key)}">Remove</button></span></div>`;
+  const mv = (kind, i, n) => `<button class="btn sm" data-set="move" data-kind="${kind}" data-i="${i}" data-d="-1" aria-label="Move up"${i === 0 ? " disabled" : ""}>↑</button><button class="btn sm" data-set="move" data-kind="${kind}" data-i="${i}" data-d="1" aria-label="Move down"${i === n - 1 ? " disabled" : ""}>↓</button>`;
+  const coreRow = (k, title) => { const c = core[k]; return `<div class="srow" style="align-items:flex-end"><span class="ctrl" style="flex:1"><span class="pill soft" style="min-width:74px">${esc(title)}</span><label style="flex:1;min-width:180px">Label shown to students<input id="cl-${k}" maxlength="60" value="${esc(c.label)}"></label>
+    ${"hint" in c ? `<label style="flex:1;min-width:200px">Help text under it (optional)<input id="ch-${k}" maxlength="150" value="${esc(c.hint)}"></label>` : ""}
+    ${k === "place" ? `<label>Required when<select id="cr-place"><option value="auto"${c.req === "auto" ? " selected" : ""}>Place name has "field" or "other"</option><option value="always"${c.req === "always" ? " selected" : ""}>Always</option><option value="never"${c.req === "never" ? " selected" : ""}>Never</option></select></label>` : ""}
+    ${k === "task" ? '<span class="pill soft">Always required</span>' : ""}</span><button class="btn sm" data-set="save-core" data-key="${k}">Save</button></div>`; };
+  $("main").innerHTML = `<div class="card"><h3>Built-in entry fields</h3>${coreRow("date", "Date")}${coreRow("start", "Start")}${coreRow("end", "End")}${coreRow("loc", "Place")}${coreRow("place", "Exact spot")}${coreRow("task", "Work done")}
+  <p class="tfoot-note">Change the wording students see. Hours are always worked out from start and end, and the work description can't be left empty.</p></div>
+  <div class="card"><h3>Places to choose from</h3>${locations.map((l, i) => `<div class="srow"><span class="ctrl" style="flex:1"><input id="lc-${i}" maxlength="40" value="${esc(l)}" style="max-width:300px"></span><span class="ctrl"><button class="btn sm" data-set="rename-loc" data-i="${i}">Save name</button>${mv("loc", i, locations.length)}<button class="btn sm danger" data-rm="${esc(l)}">Remove</button></span></div>`).join("")}
   <div class="ctrl" style="margin-top:12px"><input id="new-loc" maxlength="40" placeholder="New place, for example Sorghum field" style="max-width:320px"><button class="btn" data-add-loc>Add</button></div>
-  <p class="tfoot-note">Places with the words field or other ask the student for the exact spot.</p></div>
-  <div class="card"><h3>Extra fields on every entry</h3>${fields.length ? fields.map(fieldRow).join("") : '<p class="empty">No extra fields yet. Date, start, end, where, room or plot and work done are always there.</p>'}
+  <p class="tfoot-note">Renaming only changes the list. Entries already saved keep the old name. Whether the exact spot is required is set in Built-in entry fields above.</p></div>
+  <div class="card"><h3>Extra fields on every entry</h3>${fields.length ? fields.map((f, i) => fieldRow(f, i)).join("") : '<p class="empty">No extra fields yet. The built-in fields above are always there.</p>'}
   <div class="ctrl" style="margin-top:14px;align-items:flex-end"><label style="min-width:180px">New field name<input id="nf-label" maxlength="40" placeholder="For example Project or trial"></label>
    <label>Type<select id="nf-type"><option value="text">Text</option><option value="select">Pick from a list</option><option value="number">Number</option></select></label>
    <label style="min-width:200px">Choices (for a list)<input id="nf-opts" placeholder="NUE trial, GWAS panel, Other"></label>
    <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="nf-req"> Required</label><button class="btn" data-set="add-field">Add field</button></div>
   <p class="tfoot-note">Up to 10 fields. Removing a field hides it, and old entries keep what was typed. Required is checked in the form on the page.</p></div>
-  <div class="card"><h3>Student profile fields</h3>${profileFields.map((f) => `<div class="srow"><span class="ctrl"><input id="pl-${esc(f.key)}" maxlength="40" value="${esc(f.label)}"></span><span class="ctrl"><button class="btn sm" data-set="save-pfield" data-key="${esc(f.key)}">Save</button><button class="btn sm danger" data-set="rm-pfield" data-key="${esc(f.key)}">Remove</button></span></div>`).join("") || '<p class="empty">None.</p>'}
+  <div class="card"><h3>Student profile fields</h3>${profileFields.map((f, i) => `<div class="srow"><span class="ctrl"><input id="pl-${esc(f.key)}" maxlength="40" value="${esc(f.label)}"></span><span class="ctrl">${mv("pfield", i, profileFields.length)}<button class="btn sm" data-set="save-pfield" data-key="${esc(f.key)}">Save</button><button class="btn sm danger" data-set="rm-pfield" data-key="${esc(f.key)}">Remove</button></span></div>`).join("") || '<p class="empty">None.</p>'}
   <div class="ctrl" style="margin-top:12px"><input id="np-label" maxlength="40" placeholder="New profile field, for example Advisor" style="max-width:320px"><button class="btn" data-set="add-pfield">Add</button></div>
   <p class="tfoot-note">These appear when you edit a student under Accounts. Only you can see and change them.</p></div>
   <div class="card"><h3>Backup</h3><button class="btn primary" data-backup>Download everything (CSV)</button><p class="tfoot-note">Download once a month and keep it with your lab records.</p></div>`;
@@ -343,8 +361,18 @@ function renderSettings() {
         if (type === "select" && opts.length < 2) { toast("Give at least two choices, separated by commas."); return; }
         await saveSettings({ fields: fields.concat([cleanField({ key: slug(label), label, type, required: $("nf-req").checked, options: opts })]) }); toast("Field added"); return; }
       if (act === "save-field") { const label = $("fl-" + key).value.trim().replace(/\s+/g, " "); if (!label) { toast("Name can't be empty."); return; }
-        const o = $("fo-" + key); const opts = o ? o.value.split(",").map((x) => x.trim()).filter(Boolean) : null; if (o && opts.length < 2) { toast("Give at least two choices."); return; }
-        await saveSettings({ fields: fields.map((f) => f.key === key ? cleanField(Object.assign({}, f, { label, required: $("fr-" + key).checked, options: opts || f.options })) : f) }); toast("Saved"); return; }
+        const type = $("ft-" + key).value, opts = $("fo-" + key).value.split(",").map((x) => x.trim()).filter(Boolean); if (type === "select" && opts.length < 2) { toast("A list needs at least two choices."); return; }
+        await saveSettings({ fields: fields.map((f) => f.key === key ? cleanField(Object.assign({}, f, { label, type, hint: $("fh-" + key).value.trim(), required: $("fr-" + key).checked, options: type === "select" ? opts : f.options })) : f) }); toast("Saved"); return; }
+      if (act === "save-core") { const c = Object.assign({}, core[key]), label = $("cl-" + key).value.trim().replace(/\s+/g, " "); if (!label) { toast("The label can't be empty."); return; }
+        c.label = label; if ($("ch-" + key)) c.hint = $("ch-" + key).value.trim(); if (key === "place") c.req = $("cr-place").value;
+        await saveSettings({ core: Object.assign({}, core, { [key]: c }) }); toast("Saved"); return; }
+      if (act === "rename-loc") { const i = +st.dataset.i, v = $("lc-" + i).value.trim().replace(/\s+/g, " ");
+        if (v.length < 2 || v.length > 40) { toast("Place names need 2 to 40 characters."); return; }
+        if (locations.some((x, j) => j !== i && x.toLowerCase() === v.toLowerCase())) { toast("Already in the list."); return; }
+        await saveSettings({ locations: locations.map((x, j) => (j === i ? v : x)) }); toast("Saved"); return; }
+      if (act === "move") { const i = +st.dataset.i, d = +st.dataset.d, kind = st.dataset.kind, arr = (kind === "loc" ? locations : kind === "field" ? fields : profileFields).slice();
+        if (i + d < 0 || i + d >= arr.length) return; [arr[i], arr[i + d]] = [arr[i + d], arr[i]];
+        await saveSettings(kind === "loc" ? { locations: arr } : kind === "field" ? { fields: arr } : { profileFields: arr }); return; }
       if (act === "rm-field") { if (armed !== "rf" + key) { armed = "rf" + key; clearTimeout(armTimer); armTimer = setTimeout(() => { armed = null; renderSettings(); }, 4000); st.textContent = "Tap again to remove"; return; }
         armed = null; await saveSettings({ fields: fields.filter((f) => f.key !== key) }); toast("Field removed"); return; }
       if (act === "add-pfield") { const label = $("np-label").value.trim().replace(/\s+/g, " "); if (!label) { toast("Type a field name."); return; } if (profileFields.length >= 12) { toast("The list is full."); return; }
@@ -419,9 +447,9 @@ function addPanel(studs) {
   return `<form class="card" id="add-panel" novalidate style="margin-bottom:12px"><h3 style="margin:0">Add an entry for a student</h3>
    <div class="row2"><label>Student<select id="a-uid">${studs.map((u) => `<option value="${esc(u)}"${u === f.uid ? " selected" : ""}>${esc(nameOf(u))}</option>`).join("")}</select></label><label>Date<input id="a-date" type="date" max="${todayS}" value="${esc(f.date)}"></label></div>
    <div class="row2"><label>Start<input id="a-start" type="time" value="${esc(f.start)}"></label><label>End<input id="a-end" type="time" value="${esc(f.end)}"></label></div>
-   <div class="row2"><label>Where<select id="a-loc"><option value="">Choose…</option>${locations.map((l) => `<option${l === f.loc ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label><label>Room, field or plot<input id="a-place" maxlength="80" value="${esc(f.place)}"></label></div>
+   <div class="row2"><label>${esc(core.loc.label)}<select id="a-loc"><option value="">Choose…</option>${locations.map((l) => `<option${l === f.loc ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label><label>${esc(core.place.label)}<input id="a-place" maxlength="80" value="${esc(f.place)}"></label></div>
    ${fields.map((x) => fieldHtml(x, "ax-", f.extra)).join("")}
-   <label>Work done<textarea id="a-task" maxlength="600">${esc(f.task)}</textarea></label>
+   <label>${esc(core.task.label)}<textarea id="a-task" maxlength="600">${esc(f.task)}</textarea></label>
    <label style="flex-direction:row;align-items:center;gap:8px"><input id="a-approve" type="checkbox"${f.approve ? " checked" : ""}> Approve it now</label>
    <div class="err" role="alert">${esc(addErr)}</div><div class="btnrow"><button class="btn primary" type="button" data-act="add-save">Save entry</button></div></form>`;
 }
