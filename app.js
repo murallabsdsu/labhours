@@ -1,4 +1,4 @@
-import * as F from "./fb.js?v=17";
+import * as F from "./fb.js?v=18";
 const { auth, db } = F;
 
 const DEF_LOCS = ["Lab", "Greenhouse", "Field", "Computer or office", "Other"];
@@ -155,7 +155,7 @@ async function startSession(u) {
   $("who").innerHTML = `<span>${esc(u.email)}</span><button class="btn sm" id="so">Sign out</button>`;
   $("so").onclick = () => F.signOut(auth);
   if (isAdmin) {
-    view = "dash";
+    view = "dash"; try { history.replaceState({ v: "dash" }, "", "#dash"); } catch (e) {}
     unsubs.push(F.onSnapshot(F.collection(db, "users"), (s) => { users = {}; s.docs.forEach((d) => { const x = d.data(); users[d.id] = { email: x.email || "", requested: x.requestedName || "", name: x.name || "", approved: x.approved === true, denied: x.denied === true, cap: Number(x.weeklyCap) > 0 ? Number(x.weeklyCap) : 0, info: x.info && typeof x.info === "object" ? x.info : {} }; }); render(); }, onErr));
     unsubs.push(F.onSnapshot(F.collection(db, "adminNotes"), (s) => { notes = {}; s.docs.forEach((d) => { notes[d.id] = String((d.data() || {}).text || ""); }); render(); }, () => {}));
     unsubs.push(F.onSnapshot(F.collection(db, "entries"), (s) => { entries = s.docs.map((d) => ({ id: d.id, data: d.data() })); render(); }, onErr));
@@ -169,6 +169,8 @@ async function startSession(u) {
 }
 function onErr(e) { banner(e && e.code === "permission-denied" ? "You don't have access to this data." : "Could not load the log. Reload the page."); }
 
+function go(v) { if (v === view) return; view = v; try { history.pushState({ v }, "", "#" + v); } catch (e) {} render(); }
+window.addEventListener("popstate", (e) => { const v = e.state && e.state.v; if (me && (v === "dash" || v === "acc" || v === "set") && v !== view) { view = v; render(); } else if (me && !v && view !== "dash") { view = "dash"; render(); } });
 function render() {
   if (!me) return;
   const tabs = $("tabs");
@@ -176,7 +178,7 @@ function render() {
     tabs.hidden = false;
     const t = [["dash", "Dashboard"], ["acc", "Accounts"], ["set", "Settings"]];
     tabs.innerHTML = t.map(([k, l]) => `<button type="button" data-v="${k}" aria-pressed="${view === k}">${l}${k === "acc" && pendingUsers().length ? " (" + pendingUsers().length + ")" : ""}</button>`).join("");
-    tabs.querySelectorAll("button").forEach((b) => (b.onclick = () => { view = b.dataset.v; render(); }));
+    tabs.querySelectorAll("button").forEach((b) => (b.onclick = () => go(b.dataset.v)));
     const ae = document.activeElement; if (ae && ae.closest && ae.closest("#main") && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) return;
     if (view === "dash") renderDash(); else if (view === "acc") renderAccounts(); else renderSettings();
   } else {
@@ -470,7 +472,7 @@ function addPanel(studs) {
    <div class="err" role="alert">${esc(addErr)}</div><div class="btnrow"><button class="btn primary" type="button" data-act="add-save">Save entry</button></div></form>`;
 }
 async function dashClick(ev, fr) {
-  const g = ev.target.closest("[data-go]"); if (g) { view = g.dataset.go; render(); return; }
+  const g = ev.target.closest("[data-go]"); if (g) { go(g.dataset.go); return; }
   const b = ev.target.closest("[data-act]"); if (!b) return; const act = b.dataset.act, id = b.dataset.id;
   const rs = rows(), find = () => rs.find((x) => x.id === id);
   try {
