@@ -1,4 +1,4 @@
-import * as F from "./fb.js?v=10";
+import * as F from "./fb.js?v=11";
 const { auth, db } = F;
 
 const DEF_LOCS = ["Lab", "Greenhouse", "Field", "Computer or office", "Other"];
@@ -27,7 +27,7 @@ let fStudent = "all", fStatus = "all", returningId = null, returnNote = "", addO
 let addForm = { uid: "", date: "", start: "", end: "", loc: "", place: "", task: "", approve: true, extra: {} };
 let authMode = "in", autoMade = false;
 const DEF_PROFILE = [{ key: "student_id", label: "Student ID" }, { key: "phone", label: "Phone" }, { key: "program", label: "Program / year" }, { key: "start_date", label: "Start date" }];
-const CORE_DEF = { date: { label: "Date worked" }, start: { label: "Start" }, end: { label: "End" }, loc: { label: "Where did you work?" }, place: { label: "Which room, field or plot?", hint: "Example: Greenhouse 2 bench A, Field 3 rows 1 to 40, Lab room 214.", req: "auto" }, task: { label: "What work did you do?", hint: "" } };
+const CORE_DEF = { date: { label: "Date worked", locked: true, on: true, req: true }, start: { label: "Start", locked: true, on: true, req: true }, end: { label: "End", locked: true, on: true, req: true }, loc: { label: "Where did you work?", hint: "", on: true, req: true }, place: { label: "Room, field or plot", hint: "Example: Greenhouse 2 bench A, Field 3 rows 1 to 40, Lab room 214.", on: false, req: false }, task: { label: "What work did you do?", hint: "", on: true, req: true } };
 const cloneCore = () => JSON.parse(JSON.stringify(CORE_DEF));
 let core = cloneCore();
 let fields = [], profileFields = DEF_PROFILE.slice(), notes = {}, editingProfile = null;
@@ -143,10 +143,10 @@ async function startSession(u) {
     const d = s.exists() ? s.data() : null;
     if (d && Array.isArray(d.locations)) { const l = d.locations.filter((x) => typeof x === "string" && x.length >= 2 && x.length <= 40).slice(0, 12); if (l.length) locations = l; }
     core = cloneCore();
-    if (d && d.core && typeof d.core === "object") Object.keys(CORE_DEF).forEach((k) => { const c = d.core[k]; if (!c || typeof c !== "object") return;
-      if (typeof c.label === "string" && c.label.trim().length >= 1 && c.label.length <= 60) core[k].label = c.label;
-      if (typeof c.hint === "string" && c.hint.length <= 150 && "hint" in CORE_DEF[k]) core[k].hint = c.hint;
-      if (k === "place" && ["auto", "always", "never"].includes(c.req)) core.place.req = c.req; });
+    if (d && d.core && typeof d.core === "object") Object.keys(CORE_DEF).forEach((k) => { const c = d.core[k], t = core[k]; if (!c || typeof c !== "object") return;
+      if (typeof c.label === "string" && c.label.trim().length >= 1 && c.label.length <= 60) t.label = c.label;
+      if (typeof c.hint === "string" && c.hint.length <= 150 && "hint" in t) t.hint = c.hint;
+      if (!t.locked) { if (typeof c.on === "boolean") t.on = c.on; if (typeof c.req === "boolean") t.req = c.req; else if (k === "place" && c.req === "always") t.req = true; } });
     if (d && Array.isArray(d.fields)) fields = d.fields.filter(validField).slice(0, 10).map(cleanField);
     if (d && Array.isArray(d.profileFields)) profileFields = d.profileFields.filter((f) => f && /^[a-z0-9_]{1,30}$/.test(f.key || "") && typeof f.label === "string" && f.label.length <= 40).slice(0, 12);
     render();
@@ -200,10 +200,10 @@ function renderStudent() {
     <h2 id="f-title">${editingId ? "Edit entry" : "Add your work"}</h2>
     <div class="row2"><label>Your name<input value="${esc(profile.name)}" disabled></label><label>${esc(core.date.label)}<input id="f-date" type="date" max="${todayS}" value="${todayS}"></label></div>
     <div class="row3"><label>${esc(core.start.label)}<input id="f-start" type="time"></label><label>${esc(core.end.label)}<input id="f-end" type="time"></label><div class="lab"><small>Hours</small><div class="hours-out" id="f-hours">0 h</div></div></div>
-    <div class="lab" role="radiogroup"><span>${esc(core.loc.label)}</span><div class="chips" id="f-loc"></div></div>
-    <label>${esc(core.place.label)}${core.place.hint ? `<small>${esc(core.place.hint)}</small>` : ""}<input id="f-place" maxlength="80" autocomplete="off"></label>
+    ${core.loc.on ? `<div class="lab" role="radiogroup"><span>${esc(core.loc.label)}</span>${core.loc.hint ? `<small>${esc(core.loc.hint)}</small>` : ""}<div class="chips" id="f-loc"></div></div>` : ""}
+    ${core.place.on ? `<label>${esc(core.place.label)}${core.place.hint ? `<small>${esc(core.place.hint)}</small>` : ""}<input id="f-place" maxlength="80" autocomplete="off"></label>` : ""}
     ${fields.map((f) => fieldHtml(f, "x-", null)).join("")}
-    <label>${esc(core.task.label)}${core.task.hint ? `<small>${esc(core.task.hint)}</small>` : ""}<textarea id="f-task" maxlength="600"></textarea></label>
+    ${core.task.on ? `<label>${esc(core.task.label)}${core.task.hint ? `<small>${esc(core.task.hint)}</small>` : ""}<textarea id="f-task" maxlength="600"></textarea></label>` : ""}
     <div class="err" id="f-err" role="alert"></div>
     <div class="btnrow"><button class="btn primary" id="f-submit" type="submit">${editingId ? "Save changes" : "Save entry"}</button><button class="btn" id="f-cancel" type="button" ${editingId ? "" : "hidden"}>Cancel</button></div></form>
     <div class="card" id="mine"></div></div>`;
@@ -212,15 +212,17 @@ function renderStudent() {
   $("f-start").oninput = calc; $("f-end").oninput = calc;
   $("f-cancel").onclick = () => { editingId = null; selLoc = ""; renderStudent(); };
   $("f").onsubmit = submitStudent;
-  $("f-loc").onclick = (ev) => { const b = ev.target.closest("[data-loc]"); if (!b) return; selLoc = b.dataset.loc; fillLocs(); };
-  if (editingId) { const r = rows().find((x) => x.id === editingId); if (r) { $("f-date").value = r.date; $("f-start").value = r.start; $("f-end").value = r.end; selLoc = r.loc; fillLocs(); $("f-place").value = r.place; $("f-task").value = r.task; fields.forEach((f) => { const el = $("x-" + f.key); if (el) el.value = (r.extra && r.extra[f.key]) || ""; }); calc(); } }
+  if ($("f-loc")) $("f-loc").onclick = (ev) => { const b = ev.target.closest("[data-loc]"); if (!b) return; selLoc = b.dataset.loc; fillLocs(); };
+  if (editingId) { const r = rows().find((x) => x.id === editingId); if (r) { $("f-date").value = r.date; $("f-start").value = r.start; $("f-end").value = r.end; selLoc = r.loc; fillLocs(); if ($("f-place")) $("f-place").value = r.place; if ($("f-task")) $("f-task").value = r.task; fields.forEach((f) => { const el = $("x-" + f.key); if (el) el.value = (r.extra && r.extra[f.key]) || ""; }); calc(); } }
 }
 function fillLocs() {
   const box = $("f-loc"); if (!box) return; if (!locations.includes(selLoc) && selLoc) locations = locations.concat([selLoc]);
   box.innerHTML = locations.map((l) => `<button type="button" class="chip" role="radio" aria-checked="${l === selLoc}" data-loc="${esc(l)}">${esc(l)}</button>`).join("");
   const p = $("f-place"); if (p) p.placeholder = needsPlace(selLoc) ? "Required" : "Optional";
 }
-const needsPlace = (l) => core.place.req === "always" || (core.place.req === "auto" && /field|other/i.test(l));
+const needsPlace = () => core.place.on && core.place.req;
+const needsLoc = () => core.loc.on && core.loc.req;
+const needsTask = () => core.task.on && core.task.req;
 function overlapMsg(uid, date, start, end, skipId) {
   for (const l of rows()) if (l.uid === uid && l.id !== skipId && l.date === date && toMin(start) < toMin(l.end) && toMin(l.start) < toMin(end)) return "This overlaps an entry already logged (" + fmtT(l.start) + " to " + fmtT(l.end) + ").";
   return "";
@@ -232,7 +234,8 @@ function capMsg(uid, date, h, skipId) {
 }
 async function submitStudent(ev) {
   ev.preventDefault(); if (busy) return; refreshToday();
-  const v = { date: $("f-date").value, start: $("f-start").value, end: $("f-end").value, loc: selLoc, place: $("f-place").value.trim(), task: $("f-task").value.trim() };
+  const cur0 = editingId ? rows().find((x) => x.id === editingId) : null;
+  const v = { date: $("f-date").value, start: $("f-start").value, end: $("f-end").value, loc: core.loc.on ? selLoc : (cur0 ? cur0.loc : ""), place: $("f-place") ? $("f-place").value.trim() : (cur0 ? cur0.place : ""), task: $("f-task") ? $("f-task").value.trim() : (cur0 ? cur0.task : "") };
   const err = $("f-err"); let m = v.start && v.end ? toMin(v.end) - toMin(v.start) : 0;
   const cur = editingId ? rows().find((x) => x.id === editingId) : null;
   err.textContent = "";
@@ -243,9 +246,9 @@ async function submitStudent(ev) {
   else if (!v.start || !v.end) err.textContent = "Enter your start and end time.";
   else if (m <= 0) err.textContent = "End time must be after start time.";
   else if (m > 720) err.textContent = "One entry can't be longer than 12 hours. Split it into two.";
-  else if (!v.loc) err.textContent = "Choose where you worked.";
-  else if (needsPlace(v.loc) && v.place.length < 2) err.textContent = "Say which field or place you worked in.";
-  else if (v.task.length < 2) err.textContent = "Say what work you did.";
+  else if (needsLoc() && !v.loc) err.textContent = "Choose where you worked.";
+  else if (needsPlace() && v.place.length < 2) err.textContent = "Fill in \"" + core.place.label + "\".";
+  else if (needsTask() && v.task.length < 2) err.textContent = "Fill in \"" + core.task.label + "\".";
   else if (extraErr(readExtra("x-"))) err.textContent = extraErr(readExtra("x-"));
   else err.textContent = overlapMsg(me.uid, v.date, v.start, v.end, editingId) || capMsg(me.uid, v.date, m / 60, editingId);
   if (err.textContent) return;
@@ -320,28 +323,32 @@ function renderAccounts() {
 }
 const saveSettings = (patch) => F.setDoc(F.doc(db, "settings", "main"), Object.assign({ locations, fields, profileFields, core }, patch));
 function renderSettings() {
-  const fieldRow = (f, i) => `<div class="srow" style="align-items:flex-end"><span class="ctrl" style="flex:1"><label style="flex:1;min-width:160px">Label<input id="fl-${esc(f.key)}" maxlength="40" value="${esc(f.label)}"></label>
+  const mv = (kind, i, n) => `<button class="btn sm" data-set="move" data-kind="${kind}" data-i="${i}" data-d="-1" aria-label="Move up"${i === 0 ? " disabled" : ""}>↑</button><button class="btn sm" data-set="move" data-kind="${kind}" data-i="${i}" data-d="1" aria-label="Move down"${i === n - 1 ? " disabled" : ""}>↓</button>`;
+  const TITLE = { date: "Date", start: "Start", end: "End", loc: "Place", place: "Spot", task: "Work done" };
+  const reqBox = (id, on) => `<label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="${id}"${on ? " checked" : ""}> Required</label>`;
+  const coreRow = (k) => { const c = core[k]; return `<div class="srow" style="align-items:flex-end"><span class="ctrl" style="flex:1"><span class="pill soft" style="min-width:74px">${esc(TITLE[k])}</span><label style="flex:1;min-width:160px">Label<input id="cl-${k}" maxlength="60" value="${esc(c.label)}"></label>
+    ${"hint" in c ? `<label style="flex:1;min-width:160px">Help text (optional)<input id="ch-${k}" maxlength="150" value="${esc(c.hint)}"></label>` : ""}
+    ${c.locked ? '<span class="pill soft">Always required</span>' : reqBox("cr-" + k, c.req)}</span>
+    <span class="ctrl"><button class="btn sm" data-set="save-core" data-key="${k}">Save</button>${c.locked ? "" : `<button class="btn sm danger" data-set="rm-core" data-key="${k}">Remove</button>`}</span></div>`; };
+  const placesBox = () => `<div style="margin:0 0 14px 12px;padding-left:12px;border-left:2px solid var(--line, #c9c0b6)"><b style="font-size:13px">Choices for "${esc(core.loc.label)}"</b>${locations.map((l, i) => `<div class="srow"><span class="ctrl" style="flex:1"><input id="lc-${i}" maxlength="40" value="${esc(l)}" style="max-width:300px"></span><span class="ctrl"><button class="btn sm" data-set="rename-loc" data-i="${i}">Save name</button>${mv("loc", i, locations.length)}<button class="btn sm danger" data-rm="${esc(l)}">Remove</button></span></div>`).join("")}
+    <div class="ctrl" style="margin-top:10px"><input id="new-loc" maxlength="40" placeholder="New place, for example Sorghum field" style="max-width:320px"><button class="btn" data-add-loc>Add</button></div>
+    <p class="tfoot-note">Renaming only changes the list. Entries already saved keep the old name.</p></div>`;
+  const fieldRow = (f, i) => `<div class="srow" style="align-items:flex-end"><span class="ctrl" style="flex:1"><span class="pill soft" style="min-width:74px">Extra</span><label style="flex:1;min-width:160px">Label<input id="fl-${esc(f.key)}" maxlength="40" value="${esc(f.label)}"></label>
      <label style="flex:1;min-width:160px">Help text (optional)<input id="fh-${esc(f.key)}" maxlength="150" value="${esc(f.hint || "")}"></label>
      <label>Type<select id="ft-${esc(f.key)}"><option value="text"${f.type === "text" ? " selected" : ""}>Text</option><option value="select"${f.type === "select" ? " selected" : ""}>Pick from a list</option><option value="number"${f.type === "number" ? " selected" : ""}>Number</option></select></label>
      <label style="flex:1;min-width:160px">Choices (for a list, comma separated)<input id="fo-${esc(f.key)}" value="${esc((f.options || []).join(", "))}"></label>
-     <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="fr-${esc(f.key)}"${f.required ? " checked" : ""}> Required</label></span>
+     ${reqBox("fr-" + esc(f.key), f.required)}</span>
      <span class="ctrl">${mv("field", i, fields.length)}<button class="btn sm" data-set="save-field" data-key="${esc(f.key)}">Save</button><button class="btn sm danger" data-set="rm-field" data-key="${esc(f.key)}">Remove</button></span></div>`;
-  const mv = (kind, i, n) => `<button class="btn sm" data-set="move" data-kind="${kind}" data-i="${i}" data-d="-1" aria-label="Move up"${i === 0 ? " disabled" : ""}>↑</button><button class="btn sm" data-set="move" data-kind="${kind}" data-i="${i}" data-d="1" aria-label="Move down"${i === n - 1 ? " disabled" : ""}>↓</button>`;
-  const coreRow = (k, title) => { const c = core[k]; return `<div class="srow" style="align-items:flex-end"><span class="ctrl" style="flex:1"><span class="pill soft" style="min-width:74px">${esc(title)}</span><label style="flex:1;min-width:180px">Label shown to students<input id="cl-${k}" maxlength="60" value="${esc(c.label)}"></label>
-    ${"hint" in c ? `<label style="flex:1;min-width:200px">Help text under it (optional)<input id="ch-${k}" maxlength="150" value="${esc(c.hint)}"></label>` : ""}
-    ${k === "place" ? `<label>Required when<select id="cr-place"><option value="auto"${c.req === "auto" ? " selected" : ""}>Place name has "field" or "other"</option><option value="always"${c.req === "always" ? " selected" : ""}>Always</option><option value="never"${c.req === "never" ? " selected" : ""}>Never</option></select></label>` : ""}
-    ${k === "task" ? '<span class="pill soft">Always required</span>' : ""}</span><button class="btn sm" data-set="save-core" data-key="${k}">Save</button></div>`; };
-  $("main").innerHTML = `<div class="card"><h3>Built-in entry fields</h3>${coreRow("date", "Date")}${coreRow("start", "Start")}${coreRow("end", "End")}${coreRow("loc", "Place")}${coreRow("place", "Exact spot")}${coreRow("task", "Work done")}
-  <p class="tfoot-note">Change the wording students see. Hours are always worked out from start and end, and the work description can't be left empty.</p></div>
-  <div class="card"><h3>Places to choose from</h3>${locations.map((l, i) => `<div class="srow"><span class="ctrl" style="flex:1"><input id="lc-${i}" maxlength="40" value="${esc(l)}" style="max-width:300px"></span><span class="ctrl"><button class="btn sm" data-set="rename-loc" data-i="${i}">Save name</button>${mv("loc", i, locations.length)}<button class="btn sm danger" data-rm="${esc(l)}">Remove</button></span></div>`).join("")}
-  <div class="ctrl" style="margin-top:12px"><input id="new-loc" maxlength="40" placeholder="New place, for example Sorghum field" style="max-width:320px"><button class="btn" data-add-loc>Add</button></div>
-  <p class="tfoot-note">Renaming only changes the list. Entries already saved keep the old name. Whether the exact spot is required is set in Built-in entry fields above.</p></div>
-  <div class="card"><h3>Extra fields on every entry</h3>${fields.length ? fields.map((f, i) => fieldRow(f, i)).join("") : '<p class="empty">No extra fields yet. The built-in fields above are always there.</p>'}
-  <div class="ctrl" style="margin-top:14px;align-items:flex-end"><label style="min-width:180px">New field name<input id="nf-label" maxlength="40" placeholder="For example Project or trial"></label>
+  const gone = Object.keys(core).filter((k) => !core[k].on);
+  $("main").innerHTML = `<div class="card"><h3>Entry fields</h3>
+  ${["date", "start", "end", "loc", "place", "task"].filter((k) => core[k].on).map((k) => coreRow(k) + (k === "loc" ? placesBox() : "")).join("")}
+  ${fields.map((f, i) => fieldRow(f, i)).join("")}
+  ${gone.length ? `<div class="ctrl" style="margin:12px 0 0">${gone.map((k) => `<button class="btn sm" data-set="restore-core" data-key="${k}">Bring back "${esc(core[k].label)}"</button>`).join("")}</div>` : ""}
+  <div class="ctrl" style="margin-top:16px;align-items:flex-end"><label style="min-width:180px">New field name<input id="nf-label" maxlength="40" placeholder="For example Project or trial"></label>
    <label>Type<select id="nf-type"><option value="text">Text</option><option value="select">Pick from a list</option><option value="number">Number</option></select></label>
    <label style="min-width:200px">Choices (for a list)<input id="nf-opts" placeholder="NUE trial, GWAS panel, Other"></label>
    <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="nf-req"> Required</label><button class="btn" data-set="add-field">Add field</button></div>
-  <p class="tfoot-note">Up to 10 fields. Removing a field hides it, and old entries keep what was typed. Required is checked in the form on the page.</p></div>
+  <p class="tfoot-note">Date, start and end can be renamed but not removed, because hours are worked out from them. Everything else can be renamed, made optional or required, or removed. Up to 10 extra fields. Removing a field hides it, and old entries keep what was typed. Required is checked in the form on the page. Click Save on a row before editing another.</p></div>
   <div class="card"><h3>Student profile fields</h3>${profileFields.map((f, i) => `<div class="srow"><span class="ctrl"><input id="pl-${esc(f.key)}" maxlength="40" value="${esc(f.label)}"></span><span class="ctrl">${mv("pfield", i, profileFields.length)}<button class="btn sm" data-set="save-pfield" data-key="${esc(f.key)}">Save</button><button class="btn sm danger" data-set="rm-pfield" data-key="${esc(f.key)}">Remove</button></span></div>`).join("") || '<p class="empty">None.</p>'}
   <div class="ctrl" style="margin-top:12px"><input id="np-label" maxlength="40" placeholder="New profile field, for example Advisor" style="max-width:320px"><button class="btn" data-set="add-pfield">Add</button></div>
   <p class="tfoot-note">These appear when you edit a student under Accounts. Only you can see and change them.</p></div>
@@ -364,8 +371,11 @@ function renderSettings() {
         const type = $("ft-" + key).value, opts = $("fo-" + key).value.split(",").map((x) => x.trim()).filter(Boolean); if (type === "select" && opts.length < 2) { toast("A list needs at least two choices."); return; }
         await saveSettings({ fields: fields.map((f) => f.key === key ? cleanField(Object.assign({}, f, { label, type, hint: $("fh-" + key).value.trim(), required: $("fr-" + key).checked, options: type === "select" ? opts : f.options })) : f) }); toast("Saved"); return; }
       if (act === "save-core") { const c = Object.assign({}, core[key]), label = $("cl-" + key).value.trim().replace(/\s+/g, " "); if (!label) { toast("The label can't be empty."); return; }
-        c.label = label; if ($("ch-" + key)) c.hint = $("ch-" + key).value.trim(); if (key === "place") c.req = $("cr-place").value;
+        c.label = label; if ($("ch-" + key)) c.hint = $("ch-" + key).value.trim(); if (!c.locked) c.req = $("cr-" + key).checked;
         await saveSettings({ core: Object.assign({}, core, { [key]: c }) }); toast("Saved"); return; }
+      if (act === "rm-core") { if (armed !== "rc" + key) { armed = "rc" + key; clearTimeout(armTimer); armTimer = setTimeout(() => { armed = null; renderSettings(); }, 4000); st.textContent = "Tap again to remove"; return; }
+        armed = null; await saveSettings({ core: Object.assign({}, core, { [key]: Object.assign({}, core[key], { on: false }) }) }); toast("Field removed"); return; }
+      if (act === "restore-core") { await saveSettings({ core: Object.assign({}, core, { [key]: Object.assign({}, core[key], { on: true }) }) }); toast("Field is back"); return; }
       if (act === "rename-loc") { const i = +st.dataset.i, v = $("lc-" + i).value.trim().replace(/\s+/g, " ");
         if (v.length < 2 || v.length > 40) { toast("Place names need 2 to 40 characters."); return; }
         if (locations.some((x, j) => j !== i && x.toLowerCase() === v.toLowerCase())) { toast("Already in the list."); return; }
@@ -447,9 +457,9 @@ function addPanel(studs) {
   return `<form class="card" id="add-panel" novalidate style="margin-bottom:12px"><h3 style="margin:0">Add an entry for a student</h3>
    <div class="row2"><label>Student<select id="a-uid">${studs.map((u) => `<option value="${esc(u)}"${u === f.uid ? " selected" : ""}>${esc(nameOf(u))}</option>`).join("")}</select></label><label>Date<input id="a-date" type="date" max="${todayS}" value="${esc(f.date)}"></label></div>
    <div class="row2"><label>Start<input id="a-start" type="time" value="${esc(f.start)}"></label><label>End<input id="a-end" type="time" value="${esc(f.end)}"></label></div>
-   <div class="row2"><label>${esc(core.loc.label)}<select id="a-loc"><option value="">Choose…</option>${locations.map((l) => `<option${l === f.loc ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label><label>${esc(core.place.label)}<input id="a-place" maxlength="80" value="${esc(f.place)}"></label></div>
+   ${core.loc.on || core.place.on ? `<div class="row2">${core.loc.on ? `<label>${esc(core.loc.label)}<select id="a-loc"><option value="">Choose…</option>${locations.map((l) => `<option${l === f.loc ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` : ""}${core.place.on ? `<label>${esc(core.place.label)}<input id="a-place" maxlength="80" value="${esc(f.place)}"></label>` : ""}</div>` : ""}
    ${fields.map((x) => fieldHtml(x, "ax-", f.extra)).join("")}
-   <label>${esc(core.task.label)}<textarea id="a-task" maxlength="600">${esc(f.task)}</textarea></label>
+   ${core.task.on ? `<label>${esc(core.task.label)}<textarea id="a-task" maxlength="600">${esc(f.task)}</textarea></label>` : ""}
    <label style="flex-direction:row;align-items:center;gap:8px"><input id="a-approve" type="checkbox"${f.approve ? " checked" : ""}> Approve it now</label>
    <div class="err" role="alert">${esc(addErr)}</div><div class="btnrow"><button class="btn primary" type="button" data-act="add-save">Save entry</button></div></form>`;
 }
@@ -486,10 +496,10 @@ async function saveAdded(btn) {
   const f = addForm, m = f.start && f.end ? toMin(f.end) - toMin(f.start) : 0, place = f.place.trim(), task = f.task.trim(); addErr = "";
   if (!f.uid) addErr = "Choose a student."; else if (!/^\d{4}-\d{2}-\d{2}$/.test(f.date)) addErr = "Pick the date."; else if (f.date > todayS) addErr = "The date can't be in the future.";
   else if (!f.start || !f.end) addErr = "Enter start and end time."; else if (m <= 0) addErr = "End time must be after start time."; else if (m > 720) addErr = "One entry can't be longer than 12 hours.";
-  else if (!f.loc) addErr = "Choose where it was done."; else if (needsPlace(f.loc) && place.length < 2) addErr = "Say which field or place."; else if (task.length < 2) addErr = "Say what work was done."; else if (extraErr(f.extra)) addErr = extraErr(f.extra); else addErr = overlapMsg(f.uid, f.date, f.start, f.end, null);
+  else if (needsLoc() && !f.loc) addErr = "Choose where it was done."; else if (needsPlace() && place.length < 2) addErr = "Fill in \"" + core.place.label + "\"."; else if (needsTask() && task.length < 2) addErr = "Fill in \"" + core.task.label + "\"."; else if (extraErr(f.extra)) addErr = extraErr(f.extra); else addErr = overlapMsg(f.uid, f.date, f.start, f.end, null);
   if (addErr) { if (document.activeElement) document.activeElement.blur(); render(); return; }
   btn.disabled = true;
-  const body = { uid: f.uid, date: f.date, start: f.start, end: f.end, hours: r2(m / 60), loc: f.loc, place, task, extra: extraBody(f.extra), status: f.approve ? "approved" : "pending", createdAt: F.serverTimestamp(), addedBy: "owner" };
+  const body = { uid: f.uid, date: f.date, start: f.start, end: f.end, hours: r2(m / 60), loc: core.loc.on ? f.loc : "", place: core.place.on ? place : "", task: core.task.on ? task : "", extra: extraBody(f.extra), status: f.approve ? "approved" : "pending", createdAt: F.serverTimestamp(), addedBy: "owner" };
   if (f.approve) { body.approvedHours = r2(m / 60); body.approvedAt = F.serverTimestamp(); }
   try { await F.addDoc(F.collection(db, "entries"), body); toast(f.approve ? "Entry added and approved" : "Entry added, waiting for approval"); const u = f.uid; addForm = { uid: u, date: "", start: "", end: "", loc: "", place: "", task: "", approve: true, extra: {} }; addOpen = false; if (document.activeElement) document.activeElement.blur(); render(); }
   catch (e) { addErr = errMsg(e); btn.disabled = false; render(); }

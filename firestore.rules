@@ -13,9 +13,9 @@ service cloud.firestore {
         && d.start is string && d.start.matches('^[0-2][0-9]:[0-5][0-9]$')
         && d.end is string && d.end.matches('^[0-2][0-9]:[0-5][0-9]$')
         && d.end > d.start
-        && d.loc is string && d.loc.size() > 0 && d.loc.size() <= 40
+        && d.loc is string && d.loc.size() <= 40
         && d.place is string && d.place.size() <= 80
-        && d.task is string && d.task.size() >= 2 && d.task.size() <= 600
+        && d.task is string && d.task.size() <= 600
         && (!('extra' in d) || (d.extra is map && d.extra.size() <= 12));
     }
 
