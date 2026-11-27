@@ -1,4 +1,4 @@
-import * as F from "./fb.js?v=18";
+import * as F from "./fb.js?v=19";
 const { auth, db } = F;
 
 const DEF_LOCS = ["Lab", "Greenhouse", "Field", "Computer or office", "Other"];
@@ -161,7 +161,7 @@ async function startSession(u) {
     unsubs.push(F.onSnapshot(F.collection(db, "entries"), (s) => { entries = s.docs.map((d) => ({ id: d.id, data: d.data() })); render(); }, onErr));
   } else {
     unsubs.push(F.onSnapshot(F.doc(db, "users", u.uid), (s) => {
-      if (!s.exists()) { profile = { missing: true }; const dn = (u.displayName || "").trim(); if (NAME_RE.test(dn) && !autoMade) { autoMade = true; F.setDoc(F.doc(db, "users", u.uid), { email: u.email || "", requestedName: dn, approved: false, createdAt: F.serverTimestamp() }).catch(() => { autoMade = false; }); } } else { const x = s.data(); profile = { approved: x.approved === true, name: x.name || "", requested: x.requestedName || "", denied: x.denied === true && x.approved !== true, cap: Number(x.weeklyCap) > 0 ? Number(x.weeklyCap) : 0 }; if (profile.approved) users[u.uid] = { name: profile.name, approved: true, cap: profile.cap }; }
+      if (!s.exists()) { profile = { missing: true }; const dn = (u.displayName || "").trim(); if (NAME_RE.test(dn) && !autoMade) { autoMade = true; F.setDoc(F.doc(db, "users", u.uid), { email: u.email || "", requestedName: dn, approved: false, createdAt: F.serverTimestamp() }).catch(() => { autoMade = false; }); } } else { const x = s.data(); profile = { approved: x.approved === true, name: x.name || "", requested: x.requestedName || "", denied: x.denied === true && x.approved !== true, info: (x.info && typeof x.info === "object") ? x.info : {}, cap: Number(x.weeklyCap) > 0 ? Number(x.weeklyCap) : 0 }; if (profile.approved) users[u.uid] = { name: profile.name, approved: true, cap: profile.cap }; }
       render();
     }, onErr));
     unsubs.push(F.onSnapshot(F.query(F.collection(db, "entries"), F.where("uid", "==", u.uid)), (s) => { entries = s.docs.map((d) => ({ id: d.id, data: d.data() })); render(); }, onErr));
@@ -170,23 +170,44 @@ async function startSession(u) {
 function onErr(e) { banner(e && e.code === "permission-denied" ? "You don't have access to this data." : "Could not load the log. Reload the page."); }
 
 function go(v) { if (v === view) return; view = v; try { history.pushState({ v }, "", "#" + v); } catch (e) {} render(); }
-window.addEventListener("popstate", (e) => { const v = e.state && e.state.v; if (me && (v === "dash" || v === "acc" || v === "set") && v !== view) { view = v; render(); } else if (me && !v && view !== "dash") { view = "dash"; render(); } });
+window.addEventListener("popstate", (e) => { const v = e.state && e.state.v; if (me && (v === "dash" || v === "acc" || v === "set" || v === "prof") && v !== view) { view = v; render(); } else if (me && !v && view !== "dash") { view = "dash"; render(); } });
+function drawTabs(t) { const tabs = $("tabs"); tabs.hidden = false;
+  tabs.innerHTML = t.map(([k, l]) => `<button type="button" data-v="${k}" aria-pressed="${view === k}">${l}${k === "acc" && pendingUsers().length ? " (" + pendingUsers().length + ")" : ""}</button>`).join("");
+  tabs.querySelectorAll("button").forEach((b) => (b.onclick = () => go(b.dataset.v))); }
+function pwError(e) { const c = e && e.code || ""; return /wrong-password|invalid-credential|invalid-login/.test(c) ? "The current password is not correct." : c === "auth/weak-password" ? "Choose a stronger new password." : c === "auth/too-many-requests" ? "Too many attempts. Please wait a few minutes and try again." : c === "auth/network-request-failed" ? "No connection. Check your internet and try again." : "Could not change the password. Please try again."; }
+function renderProfile() {
+  const u = auth.currentUser || me, nm = isAdmin ? (u.displayName || "Supervisor") : (profile && profile.name) || u.displayName || "";
+  const info = !isAdmin && profile && profile.info ? profile.info : {};
+  const rowsH = [["Name", esc(nm || "Not set")], ["Email", esc(u.email)], ["Role", isAdmin ? "Supervisor (owner)" : "Student worker"]]
+    .concat(isAdmin ? [] : [["Weekly hour limit", profile && profile.cap ? fh(profile.cap) + " h per week" : "No limit set"]].concat(profileFields.map((f) => [esc(f.label), info[f.key] ? esc(String(info[f.key])) : '<span class="muted">Not set</span>'])))
+    .map(([k, v]) => `<div class="srow"><span class="muted">${k}</span><b>${v}</b></div>`).join("");
+  $("main").innerHTML = `<div class="log-grid"><div class="card"><h3>Your profile</h3>${rowsH}${isAdmin ? "" : '<p class="tfoot-note">Your name and details are managed by the lab supervisor. Ask the supervisor if something needs to change.</p>'}</div>
+  <div class="card"><h3>Change password</h3><form id="pw" autocomplete="off"><label>Current password<input id="pw-cur" type="password" autocomplete="current-password"></label>
+  <label>New password<small>At least 8 characters</small><input id="pw-new" type="password" autocomplete="new-password"></label><label>Repeat new password<input id="pw-rep" type="password" autocomplete="new-password"></label>
+  <div class="err" id="pw-err" role="alert"></div><button class="btn primary" id="pw-go" type="submit">Change password</button></form></div></div>`;
+  $("pw").onsubmit = async (ev) => { ev.preventDefault(); const cur = $("pw-cur").value, nw = $("pw-new").value, rp = $("pw-rep").value, er = $("pw-err"), go2 = $("pw-go");
+    er.textContent = ""; if (!cur) { er.textContent = "Enter your current password."; return; } if (nw.length < 8) { er.textContent = "The new password needs at least 8 characters."; return; }
+    if (nw !== rp) { er.textContent = "The two new passwords do not match."; return; } if (nw === cur) { er.textContent = "The new password must be different from the current one."; return; }
+    go2.disabled = true; const cu = auth.currentUser || me;
+    try { await F.reauthenticateWithCredential(cu, F.EmailAuthProvider.credential(cu.email, cur)); await F.updatePassword(cu, nw); ["pw-cur", "pw-new", "pw-rep"].forEach((i) => ($(i).value = "")); toast("Password changed"); }
+    catch (e) { er.textContent = pwError(e); } finally { go2.disabled = false; } };
+}
 function render() {
   if (!me) return;
   const tabs = $("tabs");
   if (isAdmin) {
     tabs.hidden = false;
-    const t = [["dash", "Dashboard"], ["acc", "Accounts"], ["set", "Settings"]];
-    tabs.innerHTML = t.map(([k, l]) => `<button type="button" data-v="${k}" aria-pressed="${view === k}">${l}${k === "acc" && pendingUsers().length ? " (" + pendingUsers().length + ")" : ""}</button>`).join("");
-    tabs.querySelectorAll("button").forEach((b) => (b.onclick = () => go(b.dataset.v)));
+    drawTabs([["dash", "Dashboard"], ["acc", "Accounts"], ["set", "Settings"], ["prof", "Profile"]]);
     const ae = document.activeElement; if (ae && ae.closest && ae.closest("#main") && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) return;
-    if (view === "dash") renderDash(); else if (view === "acc") renderAccounts(); else renderSettings();
+    if (view === "dash") renderDash(); else if (view === "acc") renderAccounts(); else if (view === "prof") renderProfile(); else renderSettings();
   } else {
     tabs.hidden = true;
     if (!profile) return;
     if (profile.missing) { renderMissing(); return; }
     if (!profile.approved && profile.denied) { $("main").innerHTML = `<div class="card narrow"><h2>Request not approved</h2><p class="muted">The lab supervisor did not approve the account ${esc(me.email)}. Please contact the supervisor directly.</p></div>`; return; }
     if (!profile.approved) { $("main").innerHTML = `<div class="card narrow"><h2>Waiting for the supervisor</h2><p class="muted">Your account (${esc(me.email)}) was created. When the lab supervisor approves it, this page will show your log form. You can close this page and come back later.</p></div>`; return; }
+    drawTabs([["dash", "My hours"], ["prof", "Profile"]]);
+    if (view === "prof") { const ae2 = document.activeElement; if (!(ae2 && ae2.closest && ae2.closest("#main") && /INPUT/.test(ae2.tagName))) renderProfile(); return; }
     const ae = document.activeElement; if (ae && ae.closest && ae.closest("#log-wrap") && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) { renderMineOnly(); return; }
     renderStudent();
   }
@@ -512,3 +533,6 @@ async function saveAdded(btn) {
   try { await F.addDoc(F.collection(db, "entries"), body); toast(f.approve ? "Entry added and approved" : "Entry added, waiting for approval"); const u = f.uid; addForm = { uid: u, date: "", start: "", end: "", loc: "", place: "", task: "", approve: true, extra: {} }; addOpen = false; if (document.activeElement) document.activeElement.blur(); render(); }
   catch (e) { addErr = errMsg(e); btn.disabled = false; render(); }
 }
+
+const goHome = () => { if (!me) return; if (view !== "dash") go("dash"); else window.scrollTo({ top: 0, behavior: "smooth" }); };
+$("brand").onclick = goHome; $("brand").onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goHome(); } };
