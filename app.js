@@ -1,4 +1,4 @@
-import * as F from "./fb.js?v=19";
+import * as F from "./fb.js?v=20";
 const { auth, db } = F;
 
 const DEF_LOCS = ["Lab", "Greenhouse", "Field", "Computer or office", "Other"];
@@ -26,11 +26,11 @@ let busy = false, editingId = null, selLoc = "", armed = null, armTimer = null;
 let fStudent = "all", fStatus = "all", returningId = null, returnNote = "", addOpen = false, addErr = "";
 let addForm = { uid: "", date: "", start: "", end: "", loc: "", place: "", task: "", approve: true, extra: {} };
 let authMode = "in", autoMade = false;
-const DEF_PROFILE = [{ key: "student_id", label: "Student ID" }, { key: "phone", label: "Phone" }, { key: "program", label: "Program / year" }, { key: "start_date", label: "Start date" }];
+const DEF_PROFILE = [{ key: "student_id", label: "Student ID" }, { key: "phone", label: "Phone / contact" }, { key: "role", label: "Role" }, { key: "program", label: "Program / year" }, { key: "start_date", label: "Start date" }];
 const CORE_DEF = { date: { label: "Date worked", locked: true, on: true, req: true }, start: { label: "Start", locked: true, on: true, req: true }, end: { label: "End", locked: true, on: true, req: true }, loc: { label: "Where did you work?", hint: "", on: true, req: true }, place: { label: "Room, field or plot", hint: "Example: Greenhouse 2 bench A, Field 3 rows 1 to 40, Lab room 214.", on: false, req: false }, task: { label: "What work did you do?", hint: "", on: true, req: true } };
 const cloneCore = () => JSON.parse(JSON.stringify(CORE_DEF));
 let core = cloneCore();
-let fields = [], profileFields = DEF_PROFILE.slice(), notes = {}, editingProfile = null;
+let adminProf = {}, fields = [], profileFields = DEF_PROFILE.slice(), notes = {}, editingProfile = null;
 const slug = (t) => (String(t).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 20) || "field") + "_" + Math.random().toString(36).slice(2, 5);
 function validField(f) { return f && /^[a-z0-9_]{1,30}$/.test(f.key || "") && typeof f.label === "string" && f.label.length >= 1 && f.label.length <= 40 && ["text", "select", "number"].includes(f.type); }
 const cleanField = (f) => ({ key: f.key, label: f.label.slice(0, 40), type: f.type, required: f.required === true, hint: typeof f.hint === "string" ? f.hint.slice(0, 150) : "", options: Array.isArray(f.options) ? f.options.filter((o) => typeof o === "string" && o.length && o.length <= 40).slice(0, 20) : [] });
@@ -149,6 +149,7 @@ async function startSession(u) {
       if (!t.locked) { if (typeof c.on === "boolean") t.on = c.on; if (typeof c.req === "boolean") t.req = c.req; else if (k === "place" && c.req === "always") t.req = true; } });
     if (d && Array.isArray(d.fields)) fields = d.fields.filter(validField).slice(0, 10).map(cleanField);
     if (d && Array.isArray(d.profileFields)) profileFields = d.profileFields.filter((f) => f && /^[a-z0-9_]{1,30}$/.test(f.key || "") && typeof f.label === "string" && f.label.length <= 40).slice(0, 12);
+    if (d && d.pfv !== 2 && !profileFields.some((f) => f.key === "role")) profileFields = profileFields.concat([{ key: "role", label: "Role" }]).slice(0, 12);
     render();
   }, () => {}));
   $("who").hidden = false;
@@ -157,6 +158,7 @@ async function startSession(u) {
   if (isAdmin) {
     view = "dash"; try { history.replaceState({ v: "dash" }, "", "#dash"); } catch (e) {}
     unsubs.push(F.onSnapshot(F.collection(db, "users"), (s) => { users = {}; s.docs.forEach((d) => { const x = d.data(); users[d.id] = { email: x.email || "", requested: x.requestedName || "", name: x.name || "", approved: x.approved === true, denied: x.denied === true, cap: Number(x.weeklyCap) > 0 ? Number(x.weeklyCap) : 0, info: x.info && typeof x.info === "object" ? x.info : {} }; }); render(); }, onErr));
+    unsubs.push(F.onSnapshot(F.doc(db, "adminProfile", u.uid), (s) => { adminProf = s.exists() ? s.data() || {} : {}; if (view !== "prof") render(); }, () => {}));
     unsubs.push(F.onSnapshot(F.collection(db, "adminNotes"), (s) => { notes = {}; s.docs.forEach((d) => { notes[d.id] = String((d.data() || {}).text || ""); }); render(); }, () => {}));
     unsubs.push(F.onSnapshot(F.collection(db, "entries"), (s) => { entries = s.docs.map((d) => ({ id: d.id, data: d.data() })); render(); }, onErr));
   } else {
@@ -175,16 +177,28 @@ function drawTabs(t) { const tabs = $("tabs"); tabs.hidden = false;
   tabs.innerHTML = t.map(([k, l]) => `<button type="button" data-v="${k}" aria-pressed="${view === k}">${l}${k === "acc" && pendingUsers().length ? " (" + pendingUsers().length + ")" : ""}</button>`).join("");
   tabs.querySelectorAll("button").forEach((b) => (b.onclick = () => go(b.dataset.v))); }
 function pwError(e) { const c = e && e.code || ""; return /wrong-password|invalid-credential|invalid-login/.test(c) ? "The current password is not correct." : c === "auth/weak-password" ? "Choose a stronger new password." : c === "auth/too-many-requests" ? "Too many attempts. Please wait a few minutes and try again." : c === "auth/network-request-failed" ? "No connection. Check your internet and try again." : "Could not change the password. Please try again."; }
+const pfLabel = (k, d) => (profileFields.find((f) => f.key === k) || { label: d }).label;
 function renderProfile() {
-  const u = auth.currentUser || me, nm = isAdmin ? (u.displayName || "Supervisor") : (profile && profile.name) || u.displayName || "";
+  const u = auth.currentUser || me, nm = isAdmin ? (adminProf.name || u.displayName || "") : (profile && profile.name) || u.displayName || "";
   const info = !isAdmin && profile && profile.info ? profile.info : {};
-  const rowsH = [["Name", esc(nm || "Not set")], ["Email", esc(u.email)], ["Role", isAdmin ? "Supervisor (owner)" : "Student worker"]]
-    .concat(isAdmin ? [] : [["Weekly hour limit", profile && profile.cap ? fh(profile.cap) + " h per week" : "No limit set"]].concat(profileFields.map((f) => [esc(f.label), info[f.key] ? esc(String(info[f.key])) : '<span class="muted">Not set</span>'])))
+  const roRows = (isAdmin ? [["Email", esc(u.email)], ["Access", "Supervisor (owner)"]]
+    : [["Name", esc(nm || "Not set")], ["Email", esc(u.email)], ["Weekly hour limit", profile && profile.cap ? fh(profile.cap) + " h per week" : "No limit set"]]
+      .concat(profileFields.filter((f) => f.key !== "phone" && f.key !== "role").map((f) => [esc(f.label), info[f.key] ? esc(String(info[f.key])) : '<span class="muted">Not set</span>'])))
     .map(([k, v]) => `<div class="srow"><span class="muted">${k}</span><b>${v}</b></div>`).join("");
-  $("main").innerHTML = `<div class="log-grid"><div class="card"><h3>Your profile</h3>${rowsH}${isAdmin ? "" : '<p class="tfoot-note">Your name and details are managed by the lab supervisor. Ask the supervisor if something needs to change.</p>'}</div>
+  const editCard = isAdmin
+    ? `<div class="card"><h3>Edit your details</h3><form id="pe" autocomplete="off"><label>Name<input id="pe-name" maxlength="40" value="${esc(nm)}"></label><label>Role or title<input id="pe-role" maxlength="60" value="${esc(adminProf.role || "")}"></label><label>Phone or contact<input id="pe-phone" maxlength="60" value="${esc(adminProf.phone || "")}"></label><div class="err" id="pe-err" role="alert"></div><button class="btn primary" type="submit">Save details</button></form></div>`
+    : `<div class="card"><h3>Contact and role</h3><form id="pe" autocomplete="off"><label>${esc(pfLabel("phone", "Phone / contact"))}<input id="pe-phone" maxlength="120" value="${esc(info.phone || "")}"></label><label>${esc(pfLabel("role", "Role"))}<input id="pe-role" maxlength="120" value="${esc(info.role || "")}"></label><div class="err" id="pe-err" role="alert"></div><button class="btn primary" type="submit">Save</button><p class="tfoot-note">You can change your contact and role here. Everything else on this page is managed by the lab supervisor.</p></form></div>`;
+  $("main").innerHTML = `<div class="log-grid"><div style="display:flex;flex-direction:column;gap:22px"><div class="card"><h3>Your profile</h3>${roRows}</div>${editCard}</div>
   <div class="card"><h3>Change password</h3><form id="pw" autocomplete="off"><label>Current password<input id="pw-cur" type="password" autocomplete="current-password"></label>
   <label>New password<small>At least 8 characters</small><input id="pw-new" type="password" autocomplete="new-password"></label><label>Repeat new password<input id="pw-rep" type="password" autocomplete="new-password"></label>
   <div class="err" id="pw-err" role="alert"></div><button class="btn primary" id="pw-go" type="submit">Change password</button></form></div></div>`;
+  $("pe").onsubmit = async (ev) => { ev.preventDefault(); const er = $("pe-err"), ph = $("pe-phone").value.trim().replace(/\s+/g, " "), ro = $("pe-role").value.trim().replace(/\s+/g, " "); er.textContent = "";
+    try {
+      if (isAdmin) { const name = $("pe-name").value.trim().replace(/\s+/g, " "); if (name.length < 2 || name.length > 40) { er.textContent = "Enter your name (2 to 40 characters)."; return; }
+        await F.setDoc(F.doc(db, "adminProfile", me.uid), { name, role: ro, phone: ph }); try { await F.updateProfile(auth.currentUser || me, { displayName: name }); } catch (e) {} adminProf = { name, role: ro, phone: ph }; }
+      else { const next = Object.assign({}, info); if (ph) next.phone = ph; else delete next.phone; if (ro) next.role = ro; else delete next.role; await F.updateDoc(F.doc(db, "users", me.uid), { info: next }); }
+      toast("Saved");
+    } catch (e) { er.textContent = "Could not save. Please try again."; } };
   $("pw").onsubmit = async (ev) => { ev.preventDefault(); const cur = $("pw-cur").value, nw = $("pw-new").value, rp = $("pw-rep").value, er = $("pw-err"), go2 = $("pw-go");
     er.textContent = ""; if (!cur) { er.textContent = "Enter your current password."; return; } if (nw.length < 8) { er.textContent = "The new password needs at least 8 characters."; return; }
     if (nw !== rp) { er.textContent = "The two new passwords do not match."; return; } if (nw === cur) { er.textContent = "The new password must be different from the current one."; return; }
@@ -350,7 +364,7 @@ function renderAccounts() {
     } catch (e) { toast(errMsg(e)); }
   };
 }
-const saveSettings = (patch) => F.setDoc(F.doc(db, "settings", "main"), Object.assign({ locations, fields, profileFields, core }, patch));
+const saveSettings = (patch) => F.setDoc(F.doc(db, "settings", "main"), Object.assign({ locations, fields, profileFields, core, pfv: 2 }, patch));
 function renderSettings() {
   const mv = (kind, i, n) => `<button class="btn sm" data-set="move" data-kind="${kind}" data-i="${i}" data-d="-1" aria-label="Move up"${i === 0 ? " disabled" : ""}>↑</button><button class="btn sm" data-set="move" data-kind="${kind}" data-i="${i}" data-d="1" aria-label="Move down"${i === n - 1 ? " disabled" : ""}>↓</button>`;
   const TITLE = { date: "Date", start: "Start", end: "End", loc: "Place", place: "Spot", task: "Work done" };
